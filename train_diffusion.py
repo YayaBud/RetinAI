@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 from glob import glob
 from tqdm import tqdm
 from PIL import Image
+import torch.multiprocessing as mp
+mp.set_start_method("spawn", force=True)
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from torch.amp import autocast, GradScaler
@@ -269,3 +271,4 @@ for epoch in range(start_epoch, EPOCHS):
     plt.close()
 
 print("Training complete.")
+
