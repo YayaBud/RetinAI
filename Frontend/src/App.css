@@ -1,0 +1,141 @@
+/* App-specific styles */
+
+/* Smooth transitions for sidebar */
+aside {
+  will-change: width;
+}
+
+/* Main content transition */
+main {
+  will-change: margin-left;
+}
+
+/* Card hover effects */
+.card-shadow {
+  transition: box-shadow 0.3s ease, transform 0.2s ease;
+}
+
+.card-shadow:hover {
+  transform: translateY(-2px);
+}
+
+/* Progress bar styling */
+[data-slot="progress-indicator"] {
+  background-color: #27D17F !important;
+}
+
+/* Badge styling */
+.badge-mint {
+  background-color: rgba(39, 209, 127, 0.15);
+  color: #27D17F;
+}
+
+/* Table row hover */
+table tbody tr {
+  transition: background-color 0.2s ease;
+}
+
+/* Button transitions */
+button {
+  transition: all 0.2s ease;
+}
+
+/* Input focus states */
+input:focus,
+textarea:focus {
+  outline: none;
+  border-color: rgba(39, 209, 127, 0.5);
+  box-shadow: 0 0 0 3px rgba(39, 209, 127, 0.1);
+}
+
+/* Avatar ring animation */
+.avatar-ring {
+  animation: pulse-ring 2s ease-in-out infinite;
+}
+
+@keyframes pulse-ring {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(39, 209, 127, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(39, 209, 127, 0.1);
+  }
+}
+
+/* Scrollbar styling for main content */
+main::-webkit-scrollbar {
+  width: 6px;
+}
+
+main::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+main::-webkit-scrollbar-thumb {
+  background: rgba(11, 30, 47, 0.15);
+  border-radius: 3px;
+}
+
+main::-webkit-scrollbar-thumb:hover {
+  background: rgba(11, 30, 47, 0.25);
+}
+
+/* Navigation link active state */
+nav a.active {
+  position: relative;
+}
+
+nav a.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 20px;
+  background-color: #27D17F;
+  border-radius: 0 2px 2px 0;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1024px) {
+  aside {
+    transform: translateX(-100%);
+  }
+  
+  aside.open {
+    transform: translateX(0);
+  }
+  
+  main {
+    margin-left: 0 !important;
+  }
+}
+
+/* Animation for page transitions */
+.page-enter {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.page-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+/* Loading skeleton */
+.skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s infinite;
+}
+
+@keyframes skeleton-loading {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}

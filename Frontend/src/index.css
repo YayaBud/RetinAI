@@ -1,0 +1,153 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Sora:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 20% 97%;
+    --foreground: 207 45% 12%;
+    --card: 210 20% 97%;
+    --card-foreground: 207 45% 12%;
+    --popover: 210 20% 97%;
+    --popover-foreground: 207 45% 12%;
+    --primary: 207 45% 12%;
+    --primary-foreground: 210 20% 97%;
+    --secondary: 210 15% 92%;
+    --secondary-foreground: 207 45% 12%;
+    --muted: 210 15% 92%;
+    --muted-foreground: 210 10% 45%;
+    --accent: 152 68% 49%;
+    --accent-foreground: 207 45% 12%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 207 20% 88%;
+    --input: 207 20% 88%;
+    --ring: 152 68% 49%;
+    --radius: 1.125rem;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 207 45% 12%;
+    --sidebar-primary: 207 45% 12%;
+    --sidebar-primary-foreground: 0 0% 98%;
+    --sidebar-accent: 210 15% 95%;
+    --sidebar-accent-foreground: 207 45% 12%;
+    --sidebar-border: 210 15% 90%;
+    --sidebar-ring: 152 68% 49%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', sans-serif;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Sora', sans-serif;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .card-shadow {
+    box-shadow: 0 18px 50px rgba(11, 30, 47, 0.10);
+  }
+  .card-shadow-lg {
+    box-shadow: 0 24px 60px rgba(11, 30, 47, 0.14);
+  }
+  .blob-mint {
+    background: rgba(39, 209, 127, 0.10);
+  }
+  .gradient-mint {
+    background: linear-gradient(135deg, rgba(39, 209, 127, 0.15) 0%, rgba(39, 209, 127, 0.05) 100%);
+  }
+  .text-navy {
+    color: #0B1E2F;
+  }
+  .bg-navy {
+    background-color: #0B1E2F;
+  }
+  .text-mint {
+    color: #27D17F;
+  }
+  .bg-mint {
+    background-color: #27D17F;
+  }
+  .border-mint {
+    border-color: #27D17F;
+  }
+  .bg-offwhite {
+    background-color: #F6F8FA;
+  }
+  .dot-pattern {
+    background-image: radial-gradient(circle, rgba(11, 30, 47, 0.08) 1px, transparent 1px);
+    background-size: 20px 20px;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(11, 30, 47, 0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(11, 30, 47, 0.3);
+}
+
+/* Animation utilities */
+@keyframes pulse-soft {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 0.72;
+  }
+}
+
+@keyframes breathe {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+@keyframes progress-bar {
+  0% {
+    transform: scaleX(0);
+  }
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 3.5s ease-in-out infinite;
+}
+
+.animate-breathe {
+  animation: breathe 4s ease-in-out infinite;
+}
+
+.animate-progress {
+  animation: progress-bar 2.5s ease-in-out infinite alternate;
+}

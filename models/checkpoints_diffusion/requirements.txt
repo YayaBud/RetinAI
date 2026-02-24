@@ -1,0 +1,13 @@
+diffusers
+transformers
+accelerate
+xformers
+opencv-python
+tqdm
+scikit-learn
+pillow
+numpy
+safetensors
+matplotlib
+tensorboard
+
