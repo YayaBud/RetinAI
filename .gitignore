@@ -1,5 +1,6 @@
 # Virtual environment
 venv_name/
+venv/
 
 # Python
 __pycache__/
@@ -8,6 +9,16 @@ __pycache__/
 # Model weights (too large for GitHub — download separately)
 backend/weights/*.pt
 backend/weights/*.pth
+*.pth
+*.pt
+
+# Training data & generated outputs (too large for GitHub)
+training/data/
+training/models/
+training/logs/
+training/diffusion/checkpoints/
+training/diffusion/train/
+training/diffusion/val/
 
 # Node
 Frontend/node_modules/
@@ -20,3 +31,6 @@ Frontend/dist/
 # OS
 Thumbs.db
 .DS_Store
+
+# Temp files
+_tmp_*.txt
