@@ -135,7 +135,7 @@ export default function HeroSection() {
           </h1>
 
           {/* Body */}
-          <p className="text-white/52 text-base lg:text-lg leading-relaxed max-w-[26rem]">
+          <p className="text-white/80 text-base lg:text-lg leading-relaxed max-w-[26rem]">
             Three EfficientNet-B3 models fused with a diffusion-based anomaly
             detector for simultaneous multi-disease classification.
           </p>
@@ -151,7 +151,7 @@ export default function HeroSection() {
               Start Scanning
               <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
             </Button>
-            <span className="text-white/25 text-sm">No login required</span>
+            <span className="text-white/60 text-sm">No login required</span>
           </div>
         </div>
 

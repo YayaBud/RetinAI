@@ -3,9 +3,12 @@ import io
 import time
 import uuid
 from contextlib import asynccontextmanager
+from typing import List, Optional
 
+import httpx
 import numpy as np
 from fastapi import FastAPI, File, UploadFile, HTTPException
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from PIL import Image
@@ -172,3 +175,77 @@ async def predict(file: UploadFile = File(...)):
         },
         "attention_map_b64": attention_b64,   # base64 PNG, draw on top of the fundus image
     })
+
+
+# ─── AI Chat (Ollama) ─────────────────────────────────────────────────────────
+
+OPHTHALMOLOGY_SYSTEM_PROMPT = (
+    "You are RetinAI Assistant, a specialized ophthalmology AI assistant "
+    "integrated with a retinal scan analysis system.\n\n"
+    "Your expertise covers:\n"
+    "- Diabetic Retinopathy (DR): stages from mild NPDR to PDR, microaneurysms, "
+    "hemorrhages, hard/soft exudates, neovascularization, macular edema\n"
+    "- Glaucoma: open-angle, angle-closure, cup-to-disc ratio, nerve fiber layer, "
+    "IOP management\n"
+    "- Pathologic Myopia: posterior staphyloma, lacquer cracks, Fuchs spot, myopic CNV\n"
+    "- General ophthalmology: AMD, retinal detachment, vascular occlusions, "
+    "optic neuropathies\n\n"
+    "When scan results are provided, analyze them thoroughly: explain probability "
+    "scores, suggest follow-up tests, discuss treatment options, and note urgency.\n\n"
+    "Guidelines:\n"
+    "- Use proper medical terminology\n"
+    "- Always note this is AI-assisted analysis, not a definitive diagnosis\n"
+    "- Recommend professional clinical evaluation for concerning findings\n"
+    "- Be concise but thorough"
+)
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    messages: List[ChatMessage]
+    scan_context: Optional[str] = None
+
+
+@app.post("/chat")
+async def chat_endpoint(request: ChatRequest):
+    system_prompt = OPHTHALMOLOGY_SYSTEM_PROMPT
+    if request.scan_context:
+        system_prompt += f"\n\nCurrent patient scan results:\n{request.scan_context}"
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        *[{"role": m.role, "content": m.content} for m in request.messages],
+    ]
+
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(
+                "http://localhost:11434/api/chat",
+                json={"model": "llama3.2:1b", "messages": messages, "stream": False},
+            )
+
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="Ollama returned an error")
+
+        data = resp.json()
+        return {"response": data["message"]["content"]}
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail="Ollama is not running. Start it with: ollama serve",
+        )
+
+
+@app.get("/ollama-status")
+async def ollama_status():
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get("http://localhost:11434/api/tags")
+        models = [m["name"] for m in resp.json().get("models", [])]
+        return {"status": "ok", "models": models}
+    except Exception:
+        return {"status": "unavailable", "models": []}

@@ -1,0 +1,129 @@
+======================================================
+  HOW TO RUN RETINAI
+======================================================
+
+IMPORTANT: The venv script launchers (pip, uvicorn, etc.)
+are broken — always use "python -m <tool>" instead of
+calling the tool directly.
+
+------------------------------------------------------
+  STEP 1 — BACKEND
+------------------------------------------------------
+
+1. Open a terminal (PowerShell)
+2. Activate the virtual environment:
+
+      cd D:\RetinaAi
+      .\venv_name\Scripts\Activate.ps1
+
+   You should see (venv_name) in your prompt.
+
+3. Go to the backend folder and start the server:
+
+      cd backend
+      python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+4. Wait for all 5 models to load:
+      - diffusion_best.pt
+      - cnn1_dr_best.pth
+      - cnn2_glaucoma_best.pth
+      - cnn3_pm_best.pth
+      - meta_classifier_best.pth
+
+   You'll see "All models loaded successfully." when ready.
+
+5. API is now live at: http://localhost:8000
+   - Health check: http://localhost:8000/health
+   - API docs:     http://localhost:8000/docs
+   - Chat:         http://localhost:8000/chat  (POST)
+   - Ollama check: http://localhost:8000/ollama-status
+
+------------------------------------------------------
+  STEP 2 — OLLAMA (Local AI Chat)
+------------------------------------------------------
+
+1. Install Ollama from https://ollama.com or via:
+
+      winget install Ollama.Ollama
+
+2. Set CPU-only mode so GPU stays free for retinal models:
+
+      [Environment]::SetEnvironmentVariable("OLLAMA_NUM_GPU", "0", "User")
+
+3. Start Ollama (runs in background automatically after install).
+   If needed, launch manually:
+
+      ollama serve
+
+4. Pull the LLM model (one-time, ~1.3 GB download):
+
+      ollama pull llama3.2:1b
+
+5. Verify it's running:
+
+      ollama list
+
+   Should show llama3.2:1b.
+
+------------------------------------------------------
+  STEP 3 — FRONTEND
+------------------------------------------------------
+
+1. Open a SECOND terminal
+2. Go to the frontend folder and start the dev server:
+
+      cd D:\RetinaAi\Frontend
+      npm run dev
+
+3. Open http://localhost:5173 in your browser.
+
+------------------------------------------------------
+  NOTES
+------------------------------------------------------
+
+- Model weights must be in backend/weights/ before
+  starting the backend. Download them from:
+  https://drive.google.com/drive/folders/1g9D6Ca4do816uyvefzbYWWS6HVuCmGn-?usp=sharing
+
+- DO NOT call pip, uvicorn, etc. directly — the .exe
+  launchers point to a stale path. Always use:
+      python -m pip install ...
+      python -m uvicorn ...
+
+- Make sure you always activate the venv first.
+  Without it, you'll use system Python which may not
+  have CUDA-enabled PyTorch, and inference will be
+  extremely slow (CPU-only).
+
+- GPU: The backend auto-detects CUDA. With a GPU
+  (e.g. GTX 1650), inference takes ~2-4 seconds.
+  On CPU it can take 30+ seconds per image.
+
+- Ollama runs on CPU (OLLAMA_NUM_GPU=0) so it doesn't
+  compete with the retinal models for GPU VRAM.
+  Response time is ~3-8 seconds for the 1B model.
+
+- To verify CUDA is working, run:
+      python -c "import torch; print(torch.cuda.is_available())"
+  Should print True.
+
+------------------------------------------------------
+  QUICK START (copy-paste)
+------------------------------------------------------
+
+Terminal 1 (Backend):
+  cd D:\RetinaAi
+  .\venv_name\Scripts\Activate.ps1
+  cd backend
+  python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+Terminal 2 (Ollama — if not already running):
+  ollama serve
+
+Terminal 3 (Frontend):
+  cd D:\RetinaAi\Frontend
+  npm run dev
+
+Then open http://localhost:5173
+
+======================================================
