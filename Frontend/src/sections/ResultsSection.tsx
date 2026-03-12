@@ -157,7 +157,7 @@ export default function ResultsSection() {
             <div ref={badgeRef} className="mt-6 flex justify-center">
               <div className="animate-breathe flex items-center gap-2 px-5 py-2.5 bg-mint rounded-full">
                 <TrendingUp className="w-4 h-4 text-navy" />
-                <span className="text-sm font-semibold text-navy">Confidence 94%</span>
+                <span className="text-sm font-semibold text-navy">Confidence 98.6%</span>
               </div>
             </div>
           </div>

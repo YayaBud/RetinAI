@@ -81,7 +81,7 @@ export default function HeroSection() {
   }, []);
 
   const stats = [
-    { icon: Activity, label: 'Test Accuracy',  value: '93.82%',   sub: 'EfficientNet-B3' },
+    { icon: Activity, label: 'Test Accuracy',  value: '98.6%',    sub: 'Meta-Classifier' },
     { icon: Brain,    label: 'Disease Types',  value: '3 Classes', sub: 'DR · Glaucoma · Myopia' },
     { icon: Scan,     label: 'Input Size',     value: '256 px',    sub: 'Diffusion model' },
   ];
