@@ -1,0 +1,22 @@
+# Virtual environment
+venv_name/
+
+# Python
+__pycache__/
+*.pyc
+
+# Model weights (too large for GitHub — download separately)
+backend/weights/*.pt
+backend/weights/*.pth
+
+# Node
+Frontend/node_modules/
+Frontend/dist/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
