@@ -519,7 +519,7 @@ backend/weights/
 └── meta_classifier_best.pth  # ~10 MB
 ```
 
-> **Note**: Weights are not included in the repository due to size. Train them using the training pipeline or contact the author for access.
+> **Download the pretrained weights from [Google Drive](https://drive.google.com/drive/folders/1g9D6Ca4do816uyvefzbYWWS6HVuCmGn-?usp=sharing)** and place them in `backend/weights/`. They are not included in the repository due to size.
 
 ### Running the Application
 
