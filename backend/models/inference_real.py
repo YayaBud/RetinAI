@@ -203,12 +203,32 @@ class RetinaInference:
         meta_logits = self._meta_model(meta_input)  # (1, 3)
         meta_probs = F.softmax(meta_logits, dim=1).squeeze(0).cpu().numpy()  # (3,) = [DR, Glaucoma, PM]
 
-        # Use meta-classifier confidence to weight the per-CNN probabilities
-        # meta_probs[0] = confidence it's DR, [1] = Glaucoma, [2] = PM
-        # Blend: use the higher of CNN prob or meta confidence as the final prob
-        dr_final = float(np.nan_to_num(max(dr_positive_prob, meta_probs[0]), nan=0.0))
-        glaucoma_final = float(np.nan_to_num(max(glaucoma_positive_prob, meta_probs[1]), nan=0.0))
-        myopia_final = float(np.nan_to_num(max(myopia_positive_prob, meta_probs[2]), nan=0.0))
+        # Use meta-classifier to weight per-CNN probabilities.
+        # The meta-classifier is a ROUTING model — it tells us which disease
+        # is the primary diagnosis. We use it to SUPPRESS false positives
+        # for non-primary diseases rather than inflate them via max().
+        #
+        # Strategy: weighted blend where the meta-classifier's routing
+        # confidence modulates the CNN's per-disease probability.
+        # For the primary disease (highest meta score), we trust the CNN.
+        # For non-primary diseases, the meta acts as a suppressor.
+        primary_idx = int(np.argmax(meta_probs))  # 0=DR, 1=Glaucoma, 2=PM
+
+        cnn_probs_arr = np.array([dr_positive_prob, glaucoma_positive_prob, myopia_positive_prob])
+
+        final_probs = np.zeros(3)
+        for i in range(3):
+            if i == primary_idx:
+                # Primary disease: trust the CNN probability directly
+                final_probs[i] = cnn_probs_arr[i]
+            else:
+                # Non-primary: blend CNN with meta routing confidence as suppressor
+                # If meta says <5% chance it's this disease, strongly suppress
+                final_probs[i] = cnn_probs_arr[i] * meta_probs[i]
+
+        dr_final = float(np.nan_to_num(np.clip(final_probs[0], 0, 1), nan=0.0))
+        glaucoma_final = float(np.nan_to_num(np.clip(final_probs[1], 0, 1), nan=0.0))
+        myopia_final = float(np.nan_to_num(np.clip(final_probs[2], 0, 1), nan=0.0))
 
         # DR severity from the 5-class output
         dr_class = int(np.argmax(dr_probs))

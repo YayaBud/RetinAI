@@ -55,12 +55,14 @@ MAX_FILE_SIZE_MB = 50
 INPUT_SIZE = 256  # diffusion model input resolution
 
 
-def preprocess_image(file_bytes: bytes) -> np.ndarray:
-    """Decode, convert to RGB, resize to INPUT_SIZE x INPUT_SIZE, normalize to [0,1]."""
+def preprocess_image(file_bytes: bytes) -> tuple[np.ndarray, tuple[int, int]]:
+    """Decode, convert to RGB, resize to INPUT_SIZE x INPUT_SIZE, normalize to [0,1].
+    Returns (image_array, original_size_wh)."""
     img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+    original_size = img.size  # (W, H) before downscaling
     img = img.resize((INPUT_SIZE, INPUT_SIZE), Image.LANCZOS)
     arr = np.array(img, dtype=np.float32) / 255.0
-    return arr
+    return arr, original_size
 
 
 def _apply_heatmap(gray: np.ndarray) -> np.ndarray:
@@ -90,10 +92,22 @@ def _apply_heatmap(gray: np.ndarray) -> np.ndarray:
     return (rgba * 255).astype(np.uint8)
 
 
-def ndarray_to_base64_png(arr: np.ndarray, as_heatmap: bool = False) -> str:
+def ndarray_to_base64_png(
+    arr: np.ndarray,
+    as_heatmap: bool = False,
+    target_size: tuple[int, int] | None = None,
+) -> str:
     """Convert a float32 numpy array to a base64-encoded PNG string.
-    If as_heatmap=True, applies a coloured RGBA heatmap to a 2-D array."""
+    If as_heatmap=True, applies a coloured RGBA heatmap to a 2-D array.
+    If target_size=(W,H), upscales to match the original fundus resolution."""
     if arr.ndim == 2 and as_heatmap:
+        # Upscale the raw anomaly map BEFORE colouring so interpolation
+        # works on smooth float values rather than quantised RGBA pixels.
+        if target_size is not None:
+            # Upscale using LANCZOS (best quality) to match original image
+            gray_img = Image.fromarray(arr, mode="F")
+            gray_img = gray_img.resize(target_size, Image.LANCZOS)
+            arr = np.array(gray_img, dtype=np.float32)
         rgba = _apply_heatmap(arr)
         img = Image.fromarray(rgba, mode="RGBA")
     elif arr.ndim == 2:
@@ -102,9 +116,13 @@ def ndarray_to_base64_png(arr: np.ndarray, as_heatmap: bool = False) -> str:
             arr = (arr - mn) / (mx - mn)
         uint8 = (arr * 255).astype(np.uint8)
         img = Image.fromarray(uint8, mode="L")
+        if target_size is not None:
+            img = img.resize(target_size, Image.BICUBIC)
     else:
         uint8 = (np.clip(arr, 0, 1) * 255).astype(np.uint8)
         img = Image.fromarray(uint8, mode="RGB")
+        if target_size is not None:
+            img = img.resize(target_size, Image.BICUBIC)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -137,7 +155,7 @@ async def predict(file: UploadFile = File(...)):
 
     # ── Preprocess ────────────────────────────────────────────────────────────
     try:
-        image_array = preprocess_image(raw)
+        image_array, original_size = preprocess_image(raw)
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Could not decode image: {e}")
 
@@ -146,8 +164,10 @@ async def predict(file: UploadFile = File(...)):
     result = inference_engine.predict(image_array)
     elapsed_ms = round((time.perf_counter() - t0) * 1000)
 
-    # ── Encode attention map → base64 PNG heatmap ─────────────────────────────
-    attention_b64 = ndarray_to_base64_png(result["attention_map"], as_heatmap=True)
+    # ── Encode attention map → base64 PNG heatmap at original resolution ──────
+    attention_b64 = ndarray_to_base64_png(
+        result["attention_map"], as_heatmap=True, target_size=original_size
+    )
 
     # ── Build response ────────────────────────────────────────────────────────
     predictions = result["predictions"]  # dict of { disease: { probability, severity, description } }
