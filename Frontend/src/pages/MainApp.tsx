@@ -733,6 +733,22 @@ function ImageLightbox({
           ×
         </button>
 
+        {/* Left: Full image — fills entire panel */}
+        <div className="lg:w-3/5 w-full bg-black flex items-center justify-center relative min-h-[50vh] lg:min-h-0">
+          {type === 'fundus' && previewUrl && (
+            <img src={previewUrl} alt="Fundus full" className="w-full h-full object-contain" />
+          )}
+          {type === 'anomaly' && previewUrl && result && (
+            <>
+              <img src={previewUrl} alt="Fundus" className="w-full h-full object-contain" />
+              <img
+                src={`data:image/png;base64,${result.attention_map_b64}`}
+                alt="Anomaly heatmap"
+                className="absolute inset-0 w-full h-full object-contain"
+                style={{ opacity: 0.75 }}
+              />
+            </>
+          )}
         {/* Left: Full image */}
         <div className="lg:w-3/5 w-full bg-black flex items-center justify-center relative">
           <div className="relative inline-block">
