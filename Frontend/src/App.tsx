@@ -11,7 +11,15 @@ import './App.css';
 gsap.registerPlugin(ScrollTrigger);
 
 function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode, allowedRoles?: string[] }) {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user, loading } = useAuth();
+  
+  if (loading) {
+    return (
+      <div className="fixed inset-0 bg-[#3b6a7a] flex items-center justify-center z-50">
+        <div className="w-8 h-8 border-4 border-[#27D17F]/30 border-t-[#27D17F] rounded-full animate-spin" />
+      </div>
+    );
+  }
   
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;

@@ -1,5 +1,6 @@
 import { useState, createContext, useContext, useRef, useEffect } from 'react';
-import { Routes, Route, NavLink, useNavigate } from 'react-router-dom';
+import { Routes, Route, NavLink, useNavigate, Navigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import {
   User,
   Scan,
@@ -25,15 +26,80 @@ import {
   MessageSquare,
   Users,
   ClipboardList,
-  History,
-  Lock,
-  Pill,
-  FolderOpen,
   Clock,
   Stethoscope,
+  Trash2,
+  Download,
+  X,
+  AlertTriangle,
+  TrendingUp,
+  Zap,
+  Globe,
+  BellRing,
+  Info,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+
+// ─── LocalStorage Data Stores ────────────────────────────────────────────────
+
+interface ScanRecord {
+  id: string;
+  date: string;
+  patientName: string;
+  primaryDiagnosis: string;
+  riskLevel: string;
+  confidence: number;
+  inferenceMs: number;
+  anomalyScore: number;
+  predictions: Record<string, { probability: number; severity: string; description: string }>;
+}
+
+interface PatientRecord {
+  id: string;
+  name: string;
+  age: number;
+  gender: string;
+  phone: string;
+  email: string;
+  lastVisit: string;
+  totalScans: number;
+  conditions: string[];
+  notes: string;
+}
+
+
+
+function loadStore<T>(key: string, fallback: T[]): T[] {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch { return fallback; }
+}
+
+function saveStore<T>(key: string, data: T[]) {
+  localStorage.setItem(key, JSON.stringify(data));
+}
+
+// ─── Notification preferences ────────────────────────────────────────────────
+
+interface NotifPrefs {
+  scanComplete: boolean;
+  appointmentReminder: boolean;
+  systemUpdates: boolean;
+  emailNotifs: boolean;
+}
+
+function loadNotifPrefs(): NotifPrefs {
+  try {
+    const raw = localStorage.getItem('retinai_notif_prefs');
+    return raw ? JSON.parse(raw) : { scanComplete: true, appointmentReminder: true, systemUpdates: false, emailNotifs: false };
+  } catch { return { scanComplete: true, appointmentReminder: true, systemUpdates: false, emailNotifs: false }; }
+}
+
+function saveNotifPrefs(prefs: NotifPrefs) {
+  localStorage.setItem('retinai_notif_prefs', JSON.stringify(prefs));
+}
 
 // Dark Mode Context
 const DarkModeContext = createContext({
@@ -52,11 +118,23 @@ export default function MainApp() {
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/health" element={<HealthPage />} />
-          <Route path="/chat" element={<ChatPage />} />
-          <Route path="/patients" element={<PatientsPage />} />
+          <Route path="/chat" element={
+            <ProtectedRoute allowedRoles={['admin', 'doctor']}>
+              <ChatPage />
+            </ProtectedRoute>
+          } />
+          <Route path="/patients" element={
+            <ProtectedRoute allowedRoles={['admin', 'doctor']}>
+              <PatientsPage />
+            </ProtectedRoute>
+          } />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/schedule" element={<SchedulePage />} />
-          <Route path="/reports" element={<ReportsPage />} />
+          <Route path="/reports" element={
+            <ProtectedRoute allowedRoles={['admin', 'doctor']}>
+              <ReportsPage />
+            </ProtectedRoute>
+          } />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </div>
@@ -64,19 +142,29 @@ export default function MainApp() {
   );
 }
 
+function ProtectedRoute({ children, allowedRoles }: { children: React.ReactNode, allowedRoles: string[] }) {
+  const { user } = useAuth();
+  if (allowedRoles && user && !allowedRoles.includes(user.role)) {
+    return <Navigate to="/app" replace />;
+  }
+  return <>{children}</>;
+}
+
+
 // Top Navigation Component
 function TopNav() {
   const { isDark, toggleDark } = useContext(DarkModeContext);
+  const { user } = useAuth();
   const navigate = useNavigate();
 
   const navItems = [
-    { label: 'Dashboard', path: '/app' },
-    { label: 'Scan', path: '/app/health' },
-    { label: 'AI Chat', path: '/app/chat' },
-    { label: 'Patients', path: '/app/patients' },
-    { label: 'Schedule', path: '/app/schedule' },
-    { label: 'Reports', path: '/app/reports' },
-  ];
+    { label: 'Dashboard', path: '/app', roles: ['admin', 'doctor', 'technician'] },
+    { label: 'Scan', path: '/app/health', roles: ['admin', 'doctor', 'technician'] },
+    { label: 'AI Chat', path: '/app/chat', roles: ['admin', 'doctor'] },
+    { label: 'Patients', path: '/app/patients', roles: ['admin', 'doctor'] },
+    { label: 'Schedule', path: '/app/schedule', roles: ['admin', 'doctor', 'technician'] },
+    { label: 'Reports', path: '/app/reports', roles: ['admin', 'doctor'] },
+  ].filter(item => item.roles.includes(user?.role || 'doctor'));
 
   return (
     <header className={`sticky top-0 z-50 border-b ${isDark ? 'bg-navy/90 border-white/10' : 'bg-white/90 border-navy/5'} backdrop-blur-md`}>
@@ -135,15 +223,19 @@ function TopNav() {
             </button>
 
             {/* Profile - Clickable */}
-            <button 
-              onClick={() => navigate('/app/profile')}
-              className="flex items-center gap-2 pl-2"
-            >
-              <Avatar className="w-9 h-9 ring-2 ring-mint/30">
-                <AvatarImage src="/avatar_02.jpg" />
-                <AvatarFallback className="bg-mint/15 text-mint text-sm">DR</AvatarFallback>
-              </Avatar>
-            </button>
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={() => navigate('/app/profile')}
+                className="flex items-center gap-2 pl-2"
+              >
+                <Avatar className="w-9 h-9 ring-2 ring-mint/30">
+                  <AvatarImage src={user?.photoURL || "/avatar_02.jpg"} />
+                  <AvatarFallback className="bg-mint/15 text-mint text-sm">
+                    {user?.username?.substring(0, 2).toUpperCase() || 'DR'}
+                  </AvatarFallback>
+                </Avatar>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -151,96 +243,108 @@ function TopNav() {
   );
 }
 
-// Dashboard Page - Main Entry with Disease Classification Cards
+// Dashboard Page - Real stats, recent scans, working search
 function DashboardPage() {
   const { isDark } = useContext(DarkModeContext);
+  const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [scanHistory] = useState<ScanRecord[]>(() => loadStore<ScanRecord>('retinai_scan_history', []));
 
-  // The 4 eye diseases from the backend diagram
   const diseases = [
-    {
-      id: 'dr',
-      name: 'Diabetic Retinopathy',
-      description: 'AI-powered detection of diabetic eye disease',
-      icon: Eye,
-      color: 'from-blue-500/20 to-blue-600/10',
-      iconColor: 'text-blue-500',
-    },
-    {
-      id: 'glaucoma',
-      name: 'Glaucoma',
-      description: 'Early detection of optic nerve damage',
-      icon: Brain,
-      color: 'from-purple-500/20 to-purple-600/10',
-      iconColor: 'text-purple-500',
-    },
-    {
-      id: 'myopia',
-      name: 'Pathological Myopia',
-      description: 'Identify degenerative myopia conditions',
-      icon: Activity,
-      color: 'from-amber-500/20 to-amber-600/10',
-      iconColor: 'text-amber-500',
-    },
-
+    { id: 'dr', name: 'Diabetic Retinopathy', description: 'AI-powered detection of diabetic eye disease', icon: Eye, color: 'from-blue-500/20 to-blue-600/10', iconColor: 'text-blue-500' },
+    { id: 'glaucoma', name: 'Glaucoma', description: 'Early detection of optic nerve damage', icon: Brain, color: 'from-purple-500/20 to-purple-600/10', iconColor: 'text-purple-500' },
+    { id: 'myopia', name: 'Pathological Myopia', description: 'Identify degenerative myopia conditions', icon: Activity, color: 'from-amber-500/20 to-amber-600/10', iconColor: 'text-amber-500' },
   ];
+
+  // Live stats from scan history
+  const totalScans = scanHistory.length;
+  const highRiskScans = scanHistory.filter(s => s.riskLevel === 'High').length;
+  const avgConfidence = totalScans > 0 ? Math.round(scanHistory.reduce((a, s) => a + s.confidence, 0) / totalScans * 100) : 0;
+  const avgInference = totalScans > 0 ? Math.round(scanHistory.reduce((a, s) => a + s.inferenceMs, 0) / totalScans) : 0;
+
+  // Search filter
+  const filteredScans = searchQuery.trim()
+    ? scanHistory.filter(s =>
+        s.patientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        s.primaryDiagnosis.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        s.id.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : scanHistory.slice(0, 8);
+
+  const riskColor = (level: string) =>
+    level === 'High' ? 'bg-red-500/15 text-red-500' : level === 'Moderate' ? 'bg-amber-500/15 text-amber-500' : 'bg-mint/15 text-mint';
+
+  const diagLabel: Record<string, string> = {
+    diabetic_retinopathy: 'Diabetic Retinopathy',
+    glaucoma: 'Glaucoma',
+    pathologic_myopia: 'Pathologic Myopia',
+    normal: 'Normal',
+  };
 
   return (
     <div className={`min-h-screen ${isDark ? 'bg-navy' : 'bg-offwhite'}`}>
       <TopNav />
-      
+
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Welcome Section */}
-        <div className="mb-10">
-          <h1 className={`text-3xl font-bold mb-2 ${isDark ? 'text-white' : 'text-navy'}`}>
-            Eye Disease Detection
+        {/* Welcome */}
+        <div className="mb-8">
+          <h1 className={`text-3xl font-bold mb-1 ${isDark ? 'text-white' : 'text-navy'}`}>
+            Welcome back, {user?.username?.split(' ')[0] || 'Doctor'}
           </h1>
           <p className={`text-lg ${isDark ? 'text-white/60' : 'text-navy/60'}`}>
-            Select a disease type to start AI-powered retinal analysis
+            {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
           </p>
         </div>
 
-        {/* Search Bar - Centered */}
-        <div className="max-w-2xl mx-auto mb-12">
+        {/* Stats Row */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          {[
+            { icon: Scan, label: 'Total Scans', value: totalScans.toString(), color: 'text-blue-500', bg: 'bg-blue-500/10' },
+            { icon: AlertTriangle, label: 'High Risk', value: highRiskScans.toString(), color: 'text-red-500', bg: 'bg-red-500/10' },
+            { icon: TrendingUp, label: 'Avg Confidence', value: `${avgConfidence}%`, color: 'text-mint', bg: 'bg-mint/10' },
+            { icon: Zap, label: 'Avg Speed', value: `${avgInference}ms`, color: 'text-purple-500', bg: 'bg-purple-500/10' },
+          ].map((stat, i) => (
+            <div key={i} className={`rounded-2xl p-5 ${isDark ? 'bg-white/5' : 'bg-white'} card-shadow`}>
+              <div className={`w-10 h-10 rounded-xl ${stat.bg} flex items-center justify-center mb-3`}>
+                <stat.icon className={`w-5 h-5 ${stat.color}`} />
+              </div>
+              <p className={`text-2xl font-bold mb-0.5 ${isDark ? 'text-white' : 'text-navy'}`}>{stat.value}</p>
+              <p className={`text-xs ${isDark ? 'text-white/50' : 'text-navy/50'}`}>{stat.label}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Search */}
+        <div className="max-w-2xl mx-auto mb-10">
           <div className={`relative rounded-2xl ${isDark ? 'bg-white/10' : 'bg-white'} card-shadow`}>
             <Search className={`absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 ${isDark ? 'text-white/40' : 'text-navy/40'}`} />
             <input
               type="text"
-              placeholder="Search patients, scans, or reports..."
-              className={`w-full pl-12 pr-4 py-4 rounded-2xl text-base focus:outline-none ${
-                isDark 
-                  ? 'bg-transparent text-white placeholder:text-white/40' 
-                  : 'bg-transparent text-navy placeholder:text-navy/40'
-              }`}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search scans by patient name, diagnosis, or scan ID..."
+              className={`w-full pl-12 pr-4 py-4 rounded-2xl text-base focus:outline-none ${isDark ? 'bg-transparent text-white placeholder:text-white/40' : 'bg-transparent text-navy placeholder:text-navy/40'}`}
             />
+            {searchQuery && (
+              <button onClick={() => setSearchQuery('')} className="absolute right-4 top-1/2 -translate-y-1/2">
+                <X className={`w-4 h-4 ${isDark ? 'text-white/40' : 'text-navy/40'}`} />
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Disease Classification Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
+        {/* Disease Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
           {diseases.map((disease) => (
-            <button
-              key={disease.id}
-              onClick={() => navigate('/app/health')}
-              className={`group relative overflow-hidden rounded-3xl p-8 text-left transition-all duration-300 hover:scale-[1.02] hover:shadow-xl ${
-                isDark ? 'bg-white/5' : 'bg-white'
-              } card-shadow`}
-            >
-              {/* Gradient Background */}
+            <button key={disease.id} onClick={() => navigate('/app/health')} className={`group relative overflow-hidden rounded-3xl p-8 text-left transition-all duration-300 hover:scale-[1.02] hover:shadow-xl ${isDark ? 'bg-white/5' : 'bg-white'} card-shadow`}>
               <div className={`absolute inset-0 bg-gradient-to-br ${disease.color} opacity-50`} />
-              
               <div className="relative z-10">
                 <div className={`w-14 h-14 rounded-2xl ${isDark ? 'bg-white/10' : 'bg-white'} flex items-center justify-center mb-6 shadow-sm`}>
                   <disease.icon className={`w-7 h-7 ${disease.iconColor}`} />
                 </div>
-                
-                <h3 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-navy'}`}>
-                  {disease.name}
-                </h3>
-                <p className={`text-sm mb-4 ${isDark ? 'text-white/60' : 'text-navy/60'}`}>
-                  {disease.description}
-                </p>
-                
+                <h3 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-navy'}`}>{disease.name}</h3>
+                <p className={`text-sm mb-4 ${isDark ? 'text-white/60' : 'text-navy/60'}`}>{disease.description}</p>
                 <div className="flex items-center gap-2 text-mint font-medium text-sm">
                   Start Analysis
                   <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
@@ -250,34 +354,52 @@ function DashboardPage() {
           ))}
         </div>
 
-        {/* Quick Actions */}
+        {/* Recent Scans */}
         <div className={`rounded-3xl p-8 ${isDark ? 'bg-white/5' : 'bg-white'} card-shadow`}>
-          <h2 className={`text-xl font-bold mb-6 ${isDark ? 'text-white' : 'text-navy'}`}>
-            Quick Actions
-          </h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {[
-              { icon: Upload, label: 'New Scan', action: () => navigate('/app/health') },
-              { icon: Calendar, label: 'Schedule', action: () => navigate('/app/schedule') },
-              { icon: FileText, label: 'Reports', action: () => navigate('/app/reports') },
-              { icon: User, label: 'Profile', action: () => navigate('/app/profile') },
-            ].map((item, i) => (
-              <button
-                key={i}
-                onClick={item.action}
-                className={`flex flex-col items-center gap-3 p-6 rounded-2xl transition-colors ${
-                  isDark 
-                    ? 'bg-white/5 hover:bg-white/10 text-white' 
-                    : 'bg-navy/5 hover:bg-navy/10 text-navy'
-                }`}
-              >
-                <div className="w-12 h-12 rounded-xl bg-mint/15 flex items-center justify-center">
-                  <item.icon className="w-6 h-6 text-mint" />
-                </div>
-                <span className="text-sm font-medium">{item.label}</span>
-              </button>
-            ))}
+          <div className="flex items-center justify-between mb-6">
+            <h2 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-navy'}`}>
+              {searchQuery ? `Search Results (${filteredScans.length})` : 'Recent Scans'}
+            </h2>
+            {!searchQuery && totalScans > 8 && (
+              <button onClick={() => navigate('/app/reports')} className="text-sm text-mint hover:underline">View all</button>
+            )}
           </div>
+
+          {filteredScans.length === 0 ? (
+            <div className={`text-center py-12 ${isDark ? 'text-white/40' : 'text-navy/40'}`}>
+              <Scan className={`w-12 h-12 mx-auto mb-3 ${isDark ? 'text-white/20' : 'text-navy/20'}`} />
+              <p className="font-medium mb-1">{searchQuery ? 'No matching scans found' : 'No scans yet'}</p>
+              <p className="text-sm">{searchQuery ? 'Try a different search term' : 'Upload a retinal image to get started'}</p>
+              {!searchQuery && (
+                <Button onClick={() => navigate('/app/health')} className="mt-4 bg-mint hover:bg-mint/90 text-navy rounded-full">
+                  <Upload className="w-4 h-4 mr-2" /> New Scan
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {filteredScans.map((scan) => (
+                <div key={scan.id} className={`flex items-center gap-4 p-4 rounded-2xl transition-colors ${isDark ? 'hover:bg-white/5' : 'hover:bg-navy/5'}`}>
+                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${scan.riskLevel === 'High' ? 'bg-red-500/10' : scan.riskLevel === 'Moderate' ? 'bg-amber-500/10' : 'bg-mint/10'}`}>
+                    <Eye className={`w-5 h-5 ${scan.riskLevel === 'High' ? 'text-red-500' : scan.riskLevel === 'Moderate' ? 'text-amber-500' : 'text-mint'}`} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className={`text-sm font-semibold truncate ${isDark ? 'text-white' : 'text-navy'}`}>{scan.patientName}</p>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${riskColor(scan.riskLevel)}`}>{scan.riskLevel}</span>
+                    </div>
+                    <p className={`text-xs ${isDark ? 'text-white/50' : 'text-navy/50'}`}>
+                      {diagLabel[scan.primaryDiagnosis] || scan.primaryDiagnosis} · {Math.round(scan.confidence * 100)}% confidence
+                    </p>
+                  </div>
+                  <div className={`text-right shrink-0 ${isDark ? 'text-white/40' : 'text-navy/40'}`}>
+                    <p className="text-xs">{new Date(scan.date).toLocaleDateString()}</p>
+                    <p className="text-xs">{scan.inferenceMs}ms</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </main>
     </div>
@@ -351,6 +473,7 @@ function ProbabilityBar({
 
 function HealthPage() {
   const { isDark } = useContext(DarkModeContext);
+  const { token } = useAuth();
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -398,6 +521,9 @@ function HealthPage() {
 
       const res = await fetch(`${BACKEND_URL}/predict`, {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
         body: form,
       });
 
@@ -420,6 +546,23 @@ function HealthPage() {
         }),
       ].join('\n');
       sessionStorage.setItem('retinai_scan_context', ctx);
+
+      // Save scan record to localStorage history
+      const scanRecord: ScanRecord = {
+        id: data.scan_id,
+        date: new Date().toISOString(),
+        patientName: selectedFile.name.replace(/\.[^/.]+$/, ''),
+        primaryDiagnosis: data.meta.primary_diagnosis,
+        riskLevel: data.meta.risk_level,
+        confidence: data.meta.primary_probability,
+        inferenceMs: data.inference_ms,
+        anomalyScore: data.anomaly_score,
+        predictions: data.predictions,
+      };
+      const history = loadStore<ScanRecord>('retinai_scan_history', []);
+      history.unshift(scanRecord);
+      if (history.length > 100) history.length = 100;
+      saveStore('retinai_scan_history', history);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unknown error. Is the backend running?');
     } finally {
@@ -828,6 +971,7 @@ function ImageLightbox({
 
 function ChatPage() {
   const { isDark } = useContext(DarkModeContext);
+  const { token } = useAuth();
   const [messages, setMessages] = useState<Array<{ role: string; content: string }>>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -857,7 +1001,10 @@ function ChatPage() {
     try {
       const res = await fetch(`${BACKEND_URL}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
           messages: newMessages.map((m) => ({ role: m.role, content: m.content })),
           scan_context: scanContext,
@@ -1059,96 +1206,217 @@ function ChatPage() {
   );
 }
 
-// Patients Page — Coming Soon
+// Patients Page - Functional implementation
 function PatientsPage() {
   const { isDark } = useContext(DarkModeContext);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [patients, setPatients] = useState<PatientRecord[]>(() => {
+    const saved = loadStore<PatientRecord>('retinai_patients', []);
+    if (saved.length === 0) {
+      // Seed initial data
+      const initial: PatientRecord[] = [
+        { id: 'PT-1001', name: 'Sarah Johnson', age: 45, gender: 'F', phone: '(555) 123-4567', email: 'sarah.j@example.com', lastVisit: new Date().toISOString(), totalScans: 2, conditions: ['Diabetic Retinopathy'], notes: 'Monitoring mild NPDR in right eye.' },
+        { id: 'PT-1002', name: 'Ahmed Hassan', age: 62, gender: 'M', phone: '(555) 234-5678', email: 'ahmed.h@example.com', lastVisit: new Date(Date.now() - 86400000 * 5).toISOString(), totalScans: 4, conditions: ['Glaucoma Suspect'], notes: 'Elevated IOP. Scheduled for visual field test.' },
+        { id: 'PT-1003', name: 'Maria Garcia', age: 28, gender: 'F', phone: '(555) 345-6789', email: 'maria.g@example.com', lastVisit: new Date(Date.now() - 86400000 * 12).toISOString(), totalScans: 1, conditions: ['Myopia'], notes: 'High myopia. Retina stable.' },
+      ];
+      saveStore('retinai_patients', initial);
+      return initial;
+    }
+    return saved;
+  });
 
-  const features = [
-    {
-      icon: Users,
-      title: 'Patient Registry',
-      description: 'Full patient database with demographics, contact info, and medical history',
-    },
-    {
-      icon: History,
-      title: 'Scan History',
-      description: 'Complete timeline of all retinal scans per patient with side-by-side comparison',
-    },
-    {
-      icon: Pill,
-      title: 'Prescriptions',
-      description: 'Generate and manage prescriptions directly from AI analysis results',
-    },
-    {
-      icon: ClipboardList,
-      title: 'Clinical Notes',
-      description: 'Attach doctor notes, follow-up plans, and referral letters to each visit',
-    },
-    {
-      icon: FolderOpen,
-      title: 'PDF Reports',
-      description: 'Export professional scan reports with heatmaps, probabilities, and recommendations',
-    },
-    {
-      icon: Lock,
-      title: 'HIPAA-Ready',
-      description: 'Role-based access, audit logs, and encrypted storage for patient data compliance',
-    },
-  ];
+  const [isAdding, setIsAdding] = useState(false);
+  const [newPatient, setNewPatient] = useState<Partial<PatientRecord>>({
+    name: '', age: 30, gender: 'M', phone: '', email: '', notes: ''
+  });
+
+  const filteredPatients = patients.filter(p => 
+    p.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    p.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    p.conditions.some(c => c.toLowerCase().includes(searchQuery.toLowerCase()))
+  );
+
+  const handleAddPatient = () => {
+    if (!newPatient.name) return;
+    
+    const pt: PatientRecord = {
+      id: `PT-${Math.floor(1000 + Math.random() * 9000)}`,
+      name: newPatient.name,
+      age: newPatient.age || 0,
+      gender: newPatient.gender || 'U',
+      phone: newPatient.phone || '',
+      email: newPatient.email || '',
+      lastVisit: new Date().toISOString(),
+      totalScans: 0,
+      conditions: [],
+      notes: newPatient.notes || ''
+    };
+    
+    const upDated = [pt, ...patients];
+    setPatients(upDated);
+    saveStore('retinai_patients', upDated);
+    setIsAdding(false);
+    setNewPatient({ name: '', age: 30, gender: 'M', phone: '', email: '', notes: '' });
+  };
+
+  const deletePatient = (id: string) => {
+    const upDated = patients.filter(p => p.id !== id);
+    setPatients(upDated);
+    saveStore('retinai_patients', upDated);
+  };
 
   return (
     <div className={`min-h-screen ${isDark ? 'bg-navy' : 'bg-offwhite'}`}>
       <TopNav />
 
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* Coming Soon Banner */}
-        <div className="text-center mb-14">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-amber-500/15 text-amber-500 text-sm font-semibold mb-6">
-            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-            Coming Soon
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 gap-4">
+          <div>
+            <h1 className={`text-2xl font-bold mb-1 ${isDark ? 'text-white' : 'text-navy'}`}>Patient Directory</h1>
+            <p className={`text-sm ${isDark ? 'text-white/60' : 'text-navy/60'}`}>Manage patient records and clinical history</p>
           </div>
-          <h1 className={`text-3xl sm:text-4xl font-bold mb-3 ${isDark ? 'text-white' : 'text-navy'}`}>
-            Patient Management
-          </h1>
-          <p className={`text-lg max-w-xl mx-auto ${isDark ? 'text-white/50' : 'text-navy/50'}`}>
-            A full clinical workflow — from intake to prescription — all connected to your AI-powered retinal analysis.
-          </p>
-        </div>
-
-        {/* Feature Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {features.map((f, i) => (
-            <div
-              key={i}
-              className={`group rounded-3xl p-6 transition-all duration-200 hover:scale-[1.02] ${
-                isDark ? 'bg-white/5 hover:bg-white/8' : 'bg-white hover:shadow-lg'
-              } card-shadow`}
-            >
-              <div className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-4 ${
-                isDark ? 'bg-mint/10' : 'bg-mint/10'
-              }`}>
-                <f.icon className="w-6 h-6 text-mint" />
-              </div>
-              <h3 className={`font-semibold mb-1.5 ${isDark ? 'text-white' : 'text-navy'}`}>
-                {f.title}
-              </h3>
-              <p className={`text-sm leading-relaxed ${isDark ? 'text-white/50' : 'text-navy/50'}`}>
-                {f.description}
-              </p>
+          
+          <div className="flex items-center gap-3 w-full md:w-auto">
+            <div className={`relative flex-1 md:w-64 rounded-xl ${isDark ? 'bg-white/10' : 'bg-white'} card-shadow`}>
+              <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${isDark ? 'text-white/40' : 'text-navy/40'}`} />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search index..."
+                className={`w-full pl-9 pr-4 py-2.5 text-sm rounded-xl focus:outline-none ${isDark ? 'bg-transparent text-white placeholder:text-white/40' : 'bg-transparent text-navy placeholder:text-navy/40'}`}
+              />
             </div>
-          ))}
+            
+            <Button onClick={() => setIsAdding(true)} className="bg-mint hover:bg-mint/90 text-navy rounded-xl h-10 px-4 shrink-0 shadow-lg shadow-mint/20">
+              <Plus className="w-4 h-4 md:mr-2" />
+              <span className="hidden md:inline">Add Patient</span>
+            </Button>
+          </div>
         </div>
 
-        {/* Bottom CTA */}
-        <div className={`mt-12 text-center rounded-3xl p-8 ${
-          isDark ? 'bg-white/5' : 'bg-white'
-        } card-shadow`}>
-          <Brain className={`w-10 h-10 mx-auto mb-3 ${isDark ? 'text-white/20' : 'text-navy/20'}`} />
-          <p className={`text-sm ${isDark ? 'text-white/40' : 'text-navy/40'}`}>
-            Patient management is under active development.<br />
-            In the meantime, use <span className="text-mint font-medium">AI Chat</span> to discuss scan results and generate clinical insights.
-          </p>
-        </div>
+        {/* Add Patient Modal */}
+        {isAdding && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div className={`w-full max-w-lg rounded-3xl p-6 md:p-8 shadow-2xl ${isDark ? 'bg-[#0d1a28] border border-white/10' : 'bg-white'}`}>
+              <div className="flex items-center justify-between mb-6">
+                <h2 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-navy'}`}>New Patient Record</h2>
+                <button onClick={() => setIsAdding(false)} className={`p-2 rounded-full ${isDark ? 'hover:bg-white/10 text-white/60' : 'hover:bg-navy/5 text-navy/60'}`}>
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className={`text-xs font-semibold uppercase tracking-wider mb-1.5 block ${isDark ? 'text-white/60' : 'text-navy/60'}`}>Full Name</label>
+                  <input type="text" value={newPatient.name} onChange={e => setNewPatient({...newPatient, name: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${isDark ? 'bg-white/5 border-white/10 text-white' : 'bg-transparent border-navy/20 text-navy'} focus:border-mint outline-none transition-colors`} placeholder="e.g. John Doe" />
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className={`text-xs font-semibold uppercase tracking-wider mb-1.5 block ${isDark ? 'text-white/60' : 'text-navy/60'}`}>Age</label>
+                    <input type="number" value={newPatient.age} onChange={e => setNewPatient({...newPatient, age: parseInt(e.target.value) || 0})} className={`w-full px-4 py-3 rounded-xl border ${isDark ? 'bg-white/5 border-white/10 text-white' : 'bg-transparent border-navy/20 text-navy'} focus:border-mint outline-none transition-colors`} />
+                  </div>
+                  <div>
+                    <label className={`text-xs font-semibold uppercase tracking-wider mb-1.5 block ${isDark ? 'text-white/60' : 'text-navy/60'}`}>Gender</label>
+                    <select value={newPatient.gender} onChange={e => setNewPatient({...newPatient, gender: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${isDark ? 'bg-white/5 border-white/10 text-white' : 'bg-transparent border-navy/20 text-navy'} focus:border-mint outline-none transition-colors`}>
+                      <option value="M">Male</option>
+                      <option value="F">Female</option>
+                      <option value="O">Other</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className={`text-xs font-semibold uppercase tracking-wider mb-1.5 block ${isDark ? 'text-white/60' : 'text-navy/60'}`}>Phone</label>
+                    <input type="tel" value={newPatient.phone} onChange={e => setNewPatient({...newPatient, phone: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${isDark ? 'bg-white/5 border-white/10 text-white' : 'bg-transparent border-navy/20 text-navy'} focus:border-mint outline-none transition-colors`} placeholder="(555) 000-0000" />
+                  </div>
+                  <div>
+                    <label className={`text-xs font-semibold uppercase tracking-wider mb-1.5 block ${isDark ? 'text-white/60' : 'text-navy/60'}`}>Email</label>
+                    <input type="email" value={newPatient.email} onChange={e => setNewPatient({...newPatient, email: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${isDark ? 'bg-white/5 border-white/10 text-white' : 'bg-transparent border-navy/20 text-navy'} focus:border-mint outline-none transition-colors`} placeholder="patient@mail.com" />
+                  </div>
+                </div>
+
+                <div>
+                  <label className={`text-xs font-semibold uppercase tracking-wider mb-1.5 block ${isDark ? 'text-white/60' : 'text-navy/60'}`}>Clinical Notes</label>
+                  <textarea value={newPatient.notes} onChange={e => setNewPatient({...newPatient, notes: e.target.value})} rows={3} className={`w-full px-4 py-3 rounded-xl border ${isDark ? 'bg-white/5 border-white/10 text-white' : 'bg-transparent border-navy/20 text-navy'} focus:border-mint outline-none transition-colors resize-none`} placeholder="Initial presentation details..." />
+                </div>
+              </div>
+
+              <div className="mt-8 flex gap-3 justify-end">
+                <Button variant="outline" onClick={() => setIsAdding(false)} className={`rounded-xl ${isDark ? 'border-white/20 text-white hover:bg-white/10' : ''}`}>Cancel</Button>
+                <Button onClick={handleAddPatient} className="bg-mint hover:bg-mint/90 text-navy rounded-xl px-6">Save Record</Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Patient Grid */}
+        {filteredPatients.length === 0 ? (
+          <div className={`text-center py-20 rounded-3xl ${isDark ? 'bg-white/5' : 'bg-white'} card-shadow`}>
+            <Users className={`w-16 h-16 mx-auto mb-4 ${isDark ? 'text-white/20' : 'text-navy/20'}`} />
+            <h3 className={`text-lg font-semibold mb-2 ${isDark ? 'text-white' : 'text-navy'}`}>No patients found</h3>
+            <p className={isDark ? 'text-white/50' : 'text-navy/50'}>
+              {searchQuery ? 'Try adjusting your search criteria.' : 'Get started by adding your first patient.'}
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+            {filteredPatients.map(pt => (
+              <div key={pt.id} className={`group rounded-3xl p-6 transition-all duration-300 hover:scale-[1.02] hover:shadow-xl ${isDark ? 'bg-white/5' : 'bg-white'} card-shadow relative overflow-hidden flex flex-col`}>
+                <div className={`absolute top-0 right-0 w-32 h-32 bg-gradient-to-br ${isDark ? 'from-white/5 to-transparent' : 'from-navy/5 to-transparent'} rounded-bl-full -z-10`} />
+                
+                <div className="flex justify-between items-start mb-5">
+                  <div className="flex items-center gap-4">
+                    <Avatar className="w-12 h-12 ring-2 ring-mint/20">
+                      <AvatarFallback className="bg-mint/15 text-mint font-bold">{pt.name.split(' ').map(n=>n[0]).join('').substring(0,2)}</AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <h3 className={`font-bold ${isDark ? 'text-white' : 'text-navy'}`}>{pt.name}</h3>
+                      <p className={`text-xs ${isDark ? 'text-white/50' : 'text-navy/50'}`}>{pt.id} • {pt.gender}, {pt.age}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => deletePatient(pt.id)} className={`p-2 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity ${isDark ? 'hover:bg-red-500/20 text-red-400' : 'hover:bg-red-50 text-red-500'}`}>
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 mb-5">
+                  <div className={`p-3 rounded-2xl ${isDark ? 'bg-white/5' : 'bg-navy/5'}`}>
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <FileText className={`w-3.5 h-3.5 ${isDark ? 'text-white/40' : 'text-navy/40'}`} />
+                      <span className={`text-[10px] uppercase font-semibold tracking-wider ${isDark ? 'text-white/50' : 'text-navy/50'}`}>Scans</span>
+                    </div>
+                    <span className={`font-medium ${isDark ? 'text-white' : 'text-navy'}`}>{pt.totalScans} total</span>
+                  </div>
+                  <div className={`p-3 rounded-2xl ${isDark ? 'bg-white/5' : 'bg-navy/5'}`}>
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <Calendar className={`w-3.5 h-3.5 ${isDark ? 'text-white/40' : 'text-navy/40'}`} />
+                      <span className={`text-[10px] uppercase font-semibold tracking-wider ${isDark ? 'text-white/50' : 'text-navy/50'}`}>Last Visit</span>
+                    </div>
+                    <span className={`font-medium ${isDark ? 'text-white' : 'text-navy'}`}>{new Date(pt.lastVisit).toLocaleDateString()}</span>
+                  </div>
+                </div>
+
+                <div className="mt-auto pt-4 border-t border-dashed flex flex-wrap gap-2 items-center" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+                  {pt.conditions.length > 0 ? (
+                    pt.conditions.map((c, i) => (
+                      <span key={i} className={`text-xs px-2.5 py-1 rounded-full font-medium ${isDark ? 'bg-white/10 text-white/80' : 'bg-navy/5 text-navy/80'}`}>
+                        {c}
+                      </span>
+                    ))
+                  ) : (
+                    <span className={`text-xs font-medium px-2.5 py-1 rounded-full bg-mint/15 text-mint`}>Healthy / Normal</span>
+                  )}
+                  <button className="ml-auto flex items-center justify-center w-8 h-8 rounded-full bg-mint/15 text-mint hover:bg-mint hover:text-navy transition-colors">
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </main>
     </div>
   );
@@ -1157,6 +1425,7 @@ function PatientsPage() {
 // Profile Page
 function ProfilePage() {
   const { isDark } = useContext(DarkModeContext);
+  const { user, logout } = useAuth();
 
   return (
     <div className={`min-h-screen ${isDark ? 'bg-navy' : 'bg-offwhite'}`}>
@@ -1168,7 +1437,7 @@ function ProfilePage() {
             My Profile
           </h1>
           <p className={`${isDark ? 'text-white/60' : 'text-navy/60'}`}>
-            Manage your account and preferences
+            Manage your account and medical credentials
           </p>
         </div>
 
@@ -1176,23 +1445,35 @@ function ProfilePage() {
           <div className="flex flex-col md:flex-row items-center gap-8">
             <div className="relative">
               <Avatar className="w-28 h-28 ring-4 ring-mint/30">
-                <AvatarImage src="/avatar_02.jpg" />
-                <AvatarFallback className="bg-mint/15 text-mint text-2xl">DR</AvatarFallback>
+                <AvatarImage src={user?.photoURL || "/avatar_02.jpg"} />
+                <AvatarFallback className="bg-mint/15 text-mint text-2xl">
+                  {user?.username?.substring(0, 2).toUpperCase() || 'DR'}
+                </AvatarFallback>
               </Avatar>
               <button className="absolute bottom-0 right-0 w-10 h-10 rounded-full bg-mint text-navy flex items-center justify-center shadow-lg hover:bg-mint/90 transition-colors">
                 <Camera className="w-5 h-5" />
               </button>
             </div>
             
-            <div className="text-center md:text-left">
+            <div className="text-center md:text-left flex-1">
               <h2 className={`text-xl font-bold mb-1 ${isDark ? 'text-white' : 'text-navy'}`}>
-                Dr. David Roberts
+                {user?.username || 'David Roberts'}
               </h2>
               <p className={`mb-4 ${isDark ? 'text-white/60' : 'text-navy/60'}`}>
-                Ophthalmologist
+                {user?.role?.toUpperCase() || 'Ophthalmologist'}
               </p>
-              <div className="inline-flex items-center gap-2 px-3 py-1 bg-mint/15 text-mint rounded-full text-sm font-medium">
-                Verified
+              <div className="flex flex-wrap items-center gap-3 justify-center md:justify-start">
+                <div className="inline-flex items-center gap-2 px-3 py-1 bg-mint/15 text-mint rounded-full text-sm font-medium">
+                  Verified Clinical Account
+                </div>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={logout}
+                  className="rounded-full border-red-500/30 text-red-500 hover:bg-red-500 hover:text-white"
+                >
+                  Sign Out
+                </Button>
               </div>
             </div>
           </div>
@@ -1200,10 +1481,10 @@ function ProfilePage() {
           <div className={`mt-8 pt-8 border-t ${isDark ? 'border-white/10' : 'border-navy/10'}`}>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {[
-                { label: 'Full Name', value: '—' },
-                { label: 'Email', value: '—' },
-                { label: 'Phone', value: '—' },
-                { label: 'License', value: '—' },
+                { label: 'Full name', value: user?.username || '-' },
+                { label: 'Cloud Email', value: user?.email || '-' },
+                { label: 'Provider', value: 'Google Identity' },
+                { label: 'Local ID', value: user?.role === 'admin' ? 'SYSTEM_ROOT' : 'CLINICAL_USER' },
               ].map((field, i) => (
                 <div key={i}>
                   <label className={`text-xs uppercase tracking-wider mb-1 block ${isDark ? 'text-white/50' : 'text-navy/50'}`}>
@@ -1465,34 +1746,88 @@ function SchedulePage() {
 // Reports Page
 function ReportsPage() {
   const { isDark } = useContext(DarkModeContext);
+  const [reports] = useState<ScanRecord[]>(() => loadStore<ScanRecord>('retinai_scan_history', []));
+  const [filter, setFilter] = useState('All');
+
+  const filteredReports = reports.filter(r => 
+    filter === 'All' ? true : 
+    filter === 'High Risk' ? r.riskLevel === 'High' :
+    r.primaryDiagnosis === filter
+  );
+
+  const riskColor = (level: string) => level === 'High' ? 'text-red-500 bg-red-500/10' : level === 'Moderate' ? 'text-amber-500 bg-amber-500/10' : 'text-mint bg-mint/10';
 
   return (
     <div className={`min-h-screen ${isDark ? 'bg-navy' : 'bg-offwhite'}`}>
       <TopNav />
       
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex items-center justify-between mb-8">
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 gap-4">
           <div>
             <h1 className={`text-2xl font-bold mb-2 ${isDark ? 'text-white' : 'text-navy'}`}>
-              Reports
+              Clinical Reports
             </h1>
             <p className={`${isDark ? 'text-white/60' : 'text-navy/60'}`}>
-              View patient analysis reports
+              Filter and review historical scan analyses
             </p>
           </div>
-          <Button variant="outline" className="rounded-full">
-            <Filter className="w-4 h-4 mr-2" />
-            Filter
-          </Button>
+          
+          <div className="flex gap-2 bg-white/5 p-1 rounded-xl">
+            {['All', 'High Risk', 'diabetic_retinopathy', 'glaucoma'].map(f => (
+              <button 
+                key={f}
+                onClick={() => setFilter(f)}
+                className={`px-4 py-2 text-sm rounded-lg font-medium transition-colors ${filter === f ? 'bg-mint text-navy' : isDark ? 'text-white/60 hover:text-white hover:bg-white/10' : 'text-navy/60 hover:text-navy hover:bg-navy/5'}`}
+              >
+                {f === 'diabetic_retinopathy' ? 'DR' : f === 'glaucoma' ? 'Glaucoma' : f}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className={`rounded-3xl p-8 ${isDark ? 'bg-white/5' : 'bg-white'} card-shadow`}>
-          <div className={`text-center py-12 ${isDark ? 'text-white/40' : 'text-navy/40'}`}>
-            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 ${isDark ? 'bg-white/5' : 'bg-navy/5'}`}>
-              <FileText className={`w-8 h-8 ${isDark ? 'text-white/30' : 'text-navy/30'}`} />
+        <div className={`rounded-3xl p-6 md:p-8 ${isDark ? 'bg-white/5' : 'bg-white'} card-shadow`}>
+          {filteredReports.length === 0 ? (
+            <div className={`text-center py-12 ${isDark ? 'text-white/40' : 'text-navy/40'}`}>
+              <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 ${isDark ? 'bg-white/5' : 'bg-navy/5'}`}>
+                <FileText className={`w-8 h-8 ${isDark ? 'text-white/30' : 'text-navy/30'}`} />
+              </div>
+              <p>No reports match your filters.</p>
             </div>
-            <p>No reports available</p>
-          </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className={`border-b border-dashed ${isDark ? 'border-white/20' : 'border-navy/20'} text-xs uppercase tracking-wider ${isDark ? 'text-white/50' : 'text-navy/50'}`}>
+                    <th className="pb-4 font-semibold px-2">Date</th>
+                    <th className="pb-4 font-semibold px-2">Patient</th>
+                    <th className="pb-4 font-semibold px-2">Diagnosis</th>
+                    <th className="pb-4 font-semibold px-2">Risk</th>
+                    <th className="pb-4 font-semibold px-2 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-dashed divide-white/10" style={{ borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}>
+                  {filteredReports.map(report => (
+                    <tr key={report.id} className={`${isDark ? 'hover:bg-white/5' : 'hover:bg-navy/5'} transition-colors`}>
+                      <td className={`py-4 px-2 text-sm whitespace-nowrap ${isDark ? 'text-white/80' : 'text-navy/80'}`}>{new Date(report.date).toLocaleDateString()}</td>
+                      <td className={`py-4 px-2 font-medium whitespace-nowrap ${isDark ? 'text-white' : 'text-navy'}`}>{report.patientName}</td>
+                      <td className={`py-4 px-2 text-sm whitespace-nowrap ${isDark ? 'text-white/90' : 'text-navy/90'}`}>{report.primaryDiagnosis.replace('_', ' ')}</td>
+                      <td className="py-4 px-2 whitespace-nowrap">
+                        <span className={`px-3 py-1 text-xs rounded-full font-semibold ${riskColor(report.riskLevel)}`}>{report.riskLevel}</span>
+                      </td>
+                      <td className="py-4 px-2 text-right whitespace-nowrap">
+                        <Button variant="outline" size="sm" className="rounded-xl mr-2 text-xs">
+                          <Eye className="w-3.5 h-3.5 mr-1" /> View
+                        </Button>
+                        <Button size="sm" className="bg-mint hover:bg-mint/90 text-navy rounded-xl text-xs">
+                          <Download className="w-3.5 h-3.5" />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </main>
     </div>
@@ -1502,13 +1837,22 @@ function ReportsPage() {
 // Settings Page
 function SettingsPage() {
   const { isDark, toggleDark } = useContext(DarkModeContext);
+  const [prefs, setPrefs] = useState<NotifPrefs>(() => loadNotifPrefs());
 
-  const settings = [
-    { icon: User, title: 'Account', description: 'Manage your profile' },
-    { icon: Bell, title: 'Notifications', description: 'Configure alerts' },
-    { icon: Shield, title: 'Privacy', description: 'Security settings' },
-    { icon: HelpCircle, title: 'Help', description: 'Get support' },
-  ];
+  const handleToggle = (key: keyof NotifPrefs) => {
+    const next = { ...prefs, [key]: !prefs[key] };
+    setPrefs(next);
+    saveNotifPrefs(next);
+  };
+
+  const ToggleSwitch = ({ checked, onChange }: { checked: boolean, onChange: () => void }) => (
+    <button
+      onClick={onChange}
+      className={`w-14 h-8 rounded-full transition-colors relative ${checked ? 'bg-mint' : 'bg-navy/20'}`}
+    >
+      <div className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-transform ${checked ? 'translate-x-7' : 'translate-x-1'}`} />
+    </button>
+  );
 
   return (
     <div className={`min-h-screen ${isDark ? 'bg-navy' : 'bg-offwhite'}`}>
@@ -1540,42 +1884,52 @@ function SettingsPage() {
                 </p>
               </div>
             </div>
-            <button
-              onClick={toggleDark}
-              className={`w-14 h-8 rounded-full transition-colors relative ${
-                isDark ? 'bg-mint' : 'bg-navy/20'
-              }`}
-            >
-              <div className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-transform ${
-                isDark ? 'translate-x-7' : 'translate-x-1'
-              }`} />
-            </button>
+            <ToggleSwitch checked={isDark} onChange={toggleDark} />
           </div>
 
-          {/* Other Settings */}
-          {settings.map((setting, i) => (
-            <button
-              key={i}
-              className={`w-full flex items-center justify-between p-6 rounded-2xl transition-colors ${
-                isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-white hover:bg-navy/5'
-              } card-shadow`}
-            >
-              <div className="flex items-center gap-4">
-                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${isDark ? 'bg-white/10' : 'bg-navy/5'}`}>
-                  <setting.icon className={`w-6 h-6 ${isDark ? 'text-white/60' : 'text-navy/60'}`} />
+          {/* Preferences */}
+          <div className={`rounded-2xl ${isDark ? 'bg-white/5' : 'bg-white'} card-shadow overflow-hidden`}>
+            {[
+              { id: 'scanComplete', icon: BellRing, title: 'Scan Completion Alerts', desc: 'Notify me when AI analysis is finished' },
+              { id: 'appointmentReminder', icon: Calendar, title: 'Appointment Reminders', desc: 'Daily notification of upcoming appointments' },
+              { id: 'systemUpdates', icon: Globe, title: 'System Updates', desc: 'Receive alerts when new AI models are deployed' },
+              { id: 'emailNotifs', icon: Info, title: 'Email Summaries', desc: 'Weekly email summary of clinic analytics' },
+            ].map((setting, i) => (
+              <div key={setting.id} className={`flex items-center justify-between p-6 ${i !== 0 ? (isDark ? 'border-t border-white/5' : 'border-t border-navy/5') : ''}`}>
+                <div className="flex items-center gap-4">
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${isDark ? 'bg-white/10' : 'bg-navy/5'}`}>
+                    <setting.icon className={`w-6 h-6 ${isDark ? 'text-white/60' : 'text-navy/60'}`} />
+                  </div>
+                  <div className="text-left">
+                    <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-navy'}`}>
+                      {setting.title}
+                    </h3>
+                    <p className={`text-sm ${isDark ? 'text-white/60' : 'text-navy/60'}`}>
+                      {setting.desc}
+                    </p>
+                  </div>
                 </div>
-                <div className="text-left">
-                  <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-navy'}`}>
-                    {setting.title}
-                  </h3>
-                  <p className={`text-sm ${isDark ? 'text-white/60' : 'text-navy/60'}`}>
-                    {setting.description}
-                  </p>
+                <ToggleSwitch 
+                  checked={prefs[setting.id as keyof NotifPrefs]} 
+                  onChange={() => handleToggle(setting.id as keyof NotifPrefs)} 
+                />
+              </div>
+            ))}
+          </div>
+          
+          <div className="pt-6">
+            <button className={`w-full flex items-center justify-between p-6 rounded-2xl transition-colors ${isDark ? 'bg-red-500/10 hover:bg-red-500/20 text-red-500' : 'bg-red-50 hover:bg-red-100 text-red-600'} card-shadow`}>
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-red-500/10">
+                  <Shield className="w-6 h-6" />
+                </div>
+                <div className="text-left font-semibold">
+                  Privacy & Data Settings
                 </div>
               </div>
-              <ChevronRight className={`w-5 h-5 ${isDark ? 'text-white/30' : 'text-navy/30'}`} />
+              <ChevronRight className="w-5 h-5 opacity-50" />
             </button>
-          ))}
+          </div>
         </div>
       </main>
     </div>

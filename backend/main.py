@@ -8,16 +8,13 @@ from typing import List, Optional
 import httpx
 import numpy as np
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
-from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from firebase_admin import auth as firebase_auth
 from fastapi.responses import JSONResponse
 from PIL import Image
 
-from auth import (
-    Token, TokenData, create_access_token, get_current_user,
-    get_password_hash, verify_password, ACCESS_TOKEN_EXPIRE_MINUTES
-)
+from auth import TokenData, get_current_user, check_role
 import datetime
 
 from models.inference_real import RetinaInference
@@ -49,7 +46,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://localhost:4173"],
+    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:3000", "http://localhost:4173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -140,45 +137,29 @@ def ndarray_to_base64_png(
 
 # ─── Authentication ───────────────────────────────────────────────────────────
 
-users_db = {
-    "admin": {
-        "username": "admin",
-        "full_name": "System Administrator",
-        "email": "admin@retinai.local",
-        "hashed_password": get_password_hash("admin123"),
-        "role": "admin"
-    }
-}
-
-def authenticate_user_db(username: str, password: str):
-    user = users_db.get(username)
-    if not user:
-        return False
-    if not verify_password(password, user["hashed_password"]):
-        return False
-    return user
-
-@app.post("/token", response_model=Token)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = authenticate_user_db(form_data.username, form_data.password)
-    if not user:
-        raise HTTPException(
-            status_code=401,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    access_token_expires = datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user["username"], "role": user["role"]}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
-
 @app.get("/users/me")
 async def read_users_me(current_user: TokenData = Depends(get_current_user)):
-    user = users_db.get(current_user.username)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return {"username": user["username"], "role": user["role"], "email": user["email"]}
+    return {
+        "username": current_user.username,
+        "role": current_user.role,
+        "email": current_user.email,
+        "uid": current_user.uid
+    }
+
+class RoleAssignment(BaseModel):
+    uid: str
+    role: str
+
+@app.post("/admin/assign_role")
+async def assign_role(
+    request: RoleAssignment,
+    current_user: TokenData = Depends(check_role(["admin"]))
+):
+    try:
+        firebase_auth.set_custom_user_claims(request.uid, {'role': request.role})
+        return {"status": "success", "message": f"Assigned role '{request.role}' to {request.uid}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
@@ -193,7 +174,10 @@ def health_check():
 
 
 @app.post("/predict")
-async def predict(file: UploadFile = File(...)):
+async def predict(
+    file: UploadFile = File(...),
+    current_user: TokenData = Depends(check_role(["doctor", "technician", "admin"]))
+):
     # ── Validate ──────────────────────────────────────────────────────────────
     if file.content_type not in ALLOWED_TYPES:
         raise HTTPException(
@@ -283,7 +267,10 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/chat")
-async def chat_endpoint(request: ChatRequest):
+async def chat_endpoint(
+    request: ChatRequest,
+    current_user: TokenData = Depends(check_role(["doctor", "admin"]))
+):
     system_prompt = OPHTHALMOLOGY_SYSTEM_PROMPT
     if request.scan_context:
         system_prompt += f"\n\nCurrent patient scan results:\n{request.scan_context}"
