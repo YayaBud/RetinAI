@@ -7,11 +7,18 @@ from typing import List, Optional
 
 import httpx
 import numpy as np
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
+from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from PIL import Image
+
+from auth import (
+    Token, TokenData, create_access_token, get_current_user,
+    get_password_hash, verify_password, ACCESS_TOKEN_EXPIRE_MINUTES
+)
+import datetime
 
 from models.inference_real import RetinaInference
 
@@ -129,6 +136,49 @@ def ndarray_to_base64_png(
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+# ─── Authentication ───────────────────────────────────────────────────────────
+
+users_db = {
+    "admin": {
+        "username": "admin",
+        "full_name": "System Administrator",
+        "email": "admin@retinai.local",
+        "hashed_password": get_password_hash("admin123"),
+        "role": "admin"
+    }
+}
+
+def authenticate_user_db(username: str, password: str):
+    user = users_db.get(username)
+    if not user:
+        return False
+    if not verify_password(password, user["hashed_password"]):
+        return False
+    return user
+
+@app.post("/token", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate_user_db(form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = datetime.timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user["username"], "role": user["role"]}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.get("/users/me")
+async def read_users_me(current_user: TokenData = Depends(get_current_user)):
+    user = users_db.get(current_user.username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"username": user["username"], "role": user["role"], "email": user["email"]}
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
