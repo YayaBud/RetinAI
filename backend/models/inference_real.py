@@ -4,7 +4,8 @@ RetinaAI Inference Engine
 Three EfficientNet-B3 CNNs + Diffusion-based Anomaly Detector + Meta-Classifier.
 
 Pipeline:
-  1. Diffusion UNet generates anomaly map + anomaly score from RGB fundus image
+  1. Diff-Mamba UNet (conditioned via RETFound projection) generates anomaly
+     map + anomaly score from RGB fundus image using simplex noise
   2. 4-channel tensor [R, G, B, anomaly_map] is fed to 3 CNNs
   3. CNN backbone features (1536 each) + anomaly score → MetaMLP (4609 → 3)
   4. Per-disease probabilities + meta-classifier output → final result
@@ -29,7 +30,7 @@ from models.architectures import (
 )
 
 # Lazy import — diffusers is heavy
-UNet2DModel = None
+UNet2DConditionModel = None
 DDPMScheduler = None
 
 WEIGHTS_DIR = Path(__file__).parent.parent / "weights"
@@ -39,11 +40,70 @@ INPUT_SIZE = 256  # diffusion model resolution; CNNs also trained at 256
 def _load_diffusers():
     """Lazy-import diffusers so the module can still be imported even if
     diffusers is missing (for tests, etc)."""
-    global UNet2DModel, DDPMScheduler
-    if UNet2DModel is None:
-        from diffusers import UNet2DModel as _U, DDPMScheduler as _S
-        UNet2DModel = _U
+    global UNet2DConditionModel, DDPMScheduler
+    if UNet2DConditionModel is None:
+        from diffusers import UNet2DConditionModel as _U, DDPMScheduler as _S
+        UNet2DConditionModel = _U
         DDPMScheduler = _S
+
+
+# ─── Simplex noise (matches training) ────────────────────────────────────────
+
+def generate_simplex_noise(shape, device, frequency=8, octaves=4):
+    """Multi-octave smooth random field — same as training."""
+    B, C, H, W = shape
+    noise = torch.zeros(B, C, H, W, device=device)
+    total_amp = 0.0
+    for octave in range(octaves):
+        freq = frequency * (2 ** octave)
+        amp  = 0.5 ** octave
+        gh   = max(2, H // freq)
+        gw   = max(2, W // freq)
+        grid = torch.randn(B, C, gh, gw, device=device)
+        noise += amp * F.interpolate(grid, size=(H, W), mode='bicubic', align_corners=False)
+        total_amp += amp
+    noise = noise / total_amp
+    mean = noise.mean(dim=[1, 2, 3], keepdim=True)
+    std  = noise.std(dim=[1, 2, 3],  keepdim=True) + 1e-8
+    return (noise - mean) / std
+
+
+# ─── Conditioner projection (loaded from checkpoint) ─────────────────────────
+
+class ConditionerProjection(nn.Module):
+    """Trainable projection MLP from training checkpoint."""
+    def __init__(self, cross_attention_dim=768):
+        super().__init__()
+        self.proj = nn.Sequential(
+            nn.Linear(1024, 768),
+            nn.GELU(),
+            nn.Linear(768, cross_attention_dim),
+            nn.LayerNorm(cross_attention_dim),
+        )
+
+    def forward(self, device, batch_size=1):
+        dummy = torch.zeros(batch_size, 1024, device=device)
+        return self.proj(dummy).unsqueeze(1)
+
+
+# ─── Anomaly Segmentation Head (loaded from checkpoint) ──────────────────────
+
+class AnomalySegHead(nn.Module):
+    """Trained to distinguish real lesions from benign reconstruction noise.
+    Takes 6-channel input: original(3) + reconstruction(3) → 1-channel sigmoid map.
+    Weights saved in checkpoint under 'seg_head'."""
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(6,  32, 3, padding=1), nn.BatchNorm2d(32),  nn.GELU(),
+            nn.Conv2d(32, 64, 3, padding=1), nn.BatchNorm2d(64),  nn.GELU(),
+            nn.Conv2d(64, 32, 3, padding=1), nn.BatchNorm2d(32),  nn.GELU(),
+            nn.Conv2d(32,  1, 1),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, original, reconstruction):
+        return self.net(torch.cat([original, reconstruction], dim=1))
 
 
 class RetinaInference:
@@ -55,6 +115,8 @@ class RetinaInference:
 
         self._diffusion_model = None
         self._noise_scheduler = None
+        self._conditioner = None
+        self._seg_head = None
         self._dr_model = None
         self._glaucoma_model = None
         self._myopia_model = None
@@ -65,7 +127,7 @@ class RetinaInference:
     def load_models(self) -> None:
         device = self.device
 
-        # ── Stage 1: Diffusion UNet ───────────────────────────────────────
+        # ── Stage 1: Diffusion UNet (UNet2DConditionModel) ────────────────
         _load_diffusers()
         diff_path = WEIGHTS_DIR / "diffusion_best.pt"
         print(f"Loading diffusion model from {diff_path} …")
@@ -74,28 +136,59 @@ class RetinaInference:
         except Exception:
             ckpt = torch.load(str(diff_path), map_location=device, weights_only=False)
 
-        self._diffusion_model = UNet2DModel(
+        # Build the same UNet2DConditionModel as training
+        self._diffusion_model = UNet2DConditionModel(
             sample_size=INPUT_SIZE,
             in_channels=3,
             out_channels=3,
             layers_per_block=2,
             block_out_channels=(128, 256, 512, 512),
             down_block_types=(
-                "DownBlock2D", "DownBlock2D",
-                "AttnDownBlock2D", "AttnDownBlock2D",
+                "DownBlock2D",
+                "CrossAttnDownBlock2D",
+                "CrossAttnDownBlock2D",
+                "CrossAttnDownBlock2D",
             ),
             up_block_types=(
-                "AttnUpBlock2D", "AttnUpBlock2D",
-                "UpBlock2D", "UpBlock2D",
+                "CrossAttnUpBlock2D",
+                "CrossAttnUpBlock2D",
+                "CrossAttnUpBlock2D",
+                "UpBlock2D",
             ),
+            cross_attention_dim=768,
         ).to(device)
+
+        # Load state dict — checkpoint saves raw UNet weights under 'model'
+        raw_sd = ckpt.get("model", ckpt.get("model_state_dict", ckpt))
+        if not isinstance(raw_sd, dict):
+            raise RuntimeError("Cannot find state dict in diffusion checkpoint")
         state_dict = {
             k.replace("_orig_mod.", ""): v
-            for k, v in ckpt["model_state_dict"].items()
+            for k, v in raw_sd.items()
         }
         self._diffusion_model.load_state_dict(state_dict)
         self._diffusion_model.eval()
-        self._noise_scheduler = DDPMScheduler(num_train_timesteps=1000)
+
+        # Noise scheduler — cosine schedule matching training
+        self._noise_scheduler = DDPMScheduler(
+            num_train_timesteps=1000,
+            beta_schedule="squaredcos_cap_v2",
+        )
+
+        # Load conditioner projection (from checkpoint)
+        self._conditioner = ConditionerProjection(cross_attention_dim=768).to(device)
+        if "conditioner_proj" in ckpt:
+            self._conditioner.proj.load_state_dict(ckpt["conditioner_proj"])
+        self._conditioner.eval()
+
+        # Load anomaly segmentation head
+        self._seg_head = AnomalySegHead().to(device)
+        if "seg_head" in ckpt:
+            self._seg_head.load_state_dict(ckpt["seg_head"])
+            print("[OK] Anomaly seg head loaded.")
+        else:
+            print("WARNING: seg_head weights not found in checkpoint.")
+        self._seg_head.eval()
         print("[OK] Diffusion model loaded.")
 
         # ── Stage 2a: DR EfficientNet-B3 ─────────────────────────────────
@@ -229,6 +322,15 @@ class RetinaInference:
         dr_final = float(np.nan_to_num(np.clip(final_probs[0], 0, 1), nan=0.0))
         glaucoma_final = float(np.nan_to_num(np.clip(final_probs[1], 0, 1), nan=0.0))
         myopia_final = float(np.nan_to_num(np.clip(final_probs[2], 0, 1), nan=0.0))
+        # The meta-classifier outputs a softmax over the 3 diseases, meaning they will sum to 1.0.
+        # Taking max() causes extreme false positives on completely healthy images where meta_probs
+        # might assign 0.9 entirely arbitrarily. 
+        # Instead, scale the meta_classifier influence by the base maximum predicted probability.
+        base_max = max(dr_positive_prob, glaucoma_positive_prob, myopia_positive_prob)
+        
+        dr_final = float(np.clip((dr_positive_prob * 0.75) + (meta_probs[0] * base_max * 0.25), 0, 1))
+        glaucoma_final = float(np.clip((glaucoma_positive_prob * 0.75) + (meta_probs[1] * base_max * 0.25), 0, 1))
+        myopia_final = float(np.clip((myopia_positive_prob * 0.75) + (meta_probs[2] * base_max * 0.25), 0, 1))
 
         # DR severity from the 5-class output
         dr_class = int(np.argmax(dr_probs))
@@ -245,15 +347,28 @@ class RetinaInference:
 
     # ─── Stage implementations ───────────────────────────────────────────
 
+    @staticmethod
+    def _make_retinal_mask(image_01: np.ndarray, margin: float = 0.05) -> np.ndarray:
+        """Build circular retinal mask. image_01: (H,W,3) in [0,1]. Returns (H,W) float32."""
+        H, W = image_01.shape[:2]
+        fg = (image_01.mean(axis=2) > 0.05).astype(np.float32)
+        cy, cx = H / 2, W / 2
+        r = min(H, W) / 2 * (1.0 - margin)
+        ys = np.arange(H, dtype=np.float32) - cy
+        xs = np.arange(W, dtype=np.float32) - cx
+        yy, xx = np.meshgrid(ys, xs, indexing='ij')
+        circle = ((yy**2 + xx**2) <= r**2).astype(np.float32)
+        return circle * fg
+
     def _run_diffusion(self, image: np.ndarray) -> tuple[np.ndarray, float]:
         """
-        Generate anomaly map and score via diffusion reconstruction error.
+        Generate anomaly map via diffusion reconstruction + trained seg head.
+        The seg head was trained to identify real lesions vs reconstruction noise.
         image: (H, W, 3) float32 [0, 1]
         Returns (attention_map (H, W) [0,1], anomaly_score float [0,1])
         """
         device = self.device
         TIMESTEP = 500
-        N_SAMPLES = 3  # fewer samples for fast inference; training used 5
 
         # Normalize to [-1, 1] for diffusion model
         img_tensor = (
@@ -268,26 +383,39 @@ class RetinaInference:
         t = torch.tensor([TIMESTEP], device=device).long()
         ac = self._noise_scheduler.alphas_cumprod[TIMESTEP].to(device)
 
-        residuals = []
-        for _ in range(N_SAMPLES):
-            noise = torch.randn_like(img_tensor)
-            noisy = self._noise_scheduler.add_noise(img_tensor, noise, t)
-            pred_noise = self._diffusion_model(noisy, t).sample.float()
-            recon = (noisy - (1 - ac).sqrt() * pred_noise) / ac.sqrt()
-            recon = recon.clamp(-1, 1)
+        # Generate conditioning from projection MLP
+        cond = self._conditioner(device)  # (1, 1, 768)
 
-            orig_np = ((img_tensor.squeeze().permute(1, 2, 0).cpu().numpy() + 1) / 2).clip(0, 1)
-            recon_np = ((recon.squeeze().permute(1, 2, 0).cpu().numpy() + 1) / 2).clip(0, 1)
-            residuals.append(np.abs(orig_np - recon_np).mean(axis=2))
+        # Single-sample reconstruction
+        noise = generate_simplex_noise(img_tensor.shape, device)
+        noisy = ac.sqrt() * img_tensor + (1 - ac).sqrt() * noise
 
-        anomaly_map = np.mean(residuals, axis=0).astype(np.float32)
-        # Guard against NaN/Inf from diffusion
-        anomaly_map = np.nan_to_num(anomaly_map, nan=0.0, posinf=1.0, neginf=0.0)
+        pred_noise = self._diffusion_model(noisy, t,
+                                            encoder_hidden_states=cond).sample.float()
+        recon = (noisy - (1 - ac).sqrt() * pred_noise) / (ac.sqrt() + 1e-8)
+        recon = recon.clamp(-1, 1)
 
-        # Normalize anomaly map to [0, 1]
-        mn, mx = anomaly_map.min(), anomaly_map.max()
-        if mx - mn > 1e-8:
-            anomaly_map = (anomaly_map - mn) / (mx - mn)
+        # Use trained seg head: (orig, recon) → learned anomaly map
+        with torch.no_grad():
+            seg_map = self._seg_head(img_tensor.float(), recon.float())  # (1,1,H,W)
+
+        anomaly_map = seg_map.squeeze().cpu().numpy().astype(np.float32)  # (H,W) in [0,1]
+
+        # Apply retinal mask to exclude borders
+        retinal_mask = self._make_retinal_mask(image)
+        anomaly_map = anomaly_map * retinal_mask
+
+        # Percentile-based normalization: stretch relative differences
+        # so the visualization shows where the seg head sees MORE anomaly
+        fg_vals = anomaly_map[retinal_mask > 0.5]
+        if len(fg_vals) > 0:
+            p_low = np.percentile(fg_vals, 70)   # bottom 70% → near zero
+            p_high = np.percentile(fg_vals, 99)  # top 1% → fully bright
+            if p_high - p_low > 1e-6:
+                anomaly_map = ((anomaly_map - p_low) / (p_high - p_low)).clip(0, 1)
+            else:
+                anomaly_map = np.zeros_like(anomaly_map)
+        anomaly_map = anomaly_map * retinal_mask  # re-mask after stretch
 
         anomaly_score = float(np.nan_to_num(anomaly_map.mean(), nan=0.0))
         return anomaly_map, anomaly_score
