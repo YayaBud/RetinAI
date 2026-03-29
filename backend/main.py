@@ -64,28 +64,30 @@ def preprocess_image(file_bytes: bytes) -> np.ndarray:
 
 
 def _apply_heatmap(gray: np.ndarray) -> np.ndarray:
-    """Convert a (H,W) float32 [0,1] grayscale map to an RGBA heatmap.
-    Low values → transparent, high values → red/yellow, fully opaque."""
-    # Normalise to 0-1
-    mn, mx = gray.min(), gray.max()
-    if mx - mn > 1e-8:
-        gray = (gray - mn) / (mx - mn)
-    else:
-        gray = np.zeros_like(gray)
+    """Convert a (H,W) float32 [0,1] grayscale map to an RGBA heatmap
+    using matplotlib's jet colormap — matching the reference anomaly maps.
+    Low values → transparent, high values → opaque red/yellow."""
+    
+    gray = np.clip(gray, 0, 1)
 
-    # Boost contrast so subtle anomalies are visible
-    gray = np.power(gray, 0.5)
+    try:
+        import matplotlib.cm as cm
+        colored = cm.jet(gray)  # (H, W, 4) RGBA float in [0,1]
+        rgba = colored.astype(np.float32)
+    except ImportError:
+        # Fallback: manual jet-ish colormap
+        h, w = gray.shape
+        rgba = np.zeros((h, w, 4), dtype=np.float32)
+        t = gray
+        rgba[..., 0] = np.clip(1.5 - np.abs(t - 0.75) * 4, 0, 1)   # R
+        rgba[..., 1] = np.clip(1.5 - np.abs(t - 0.5)  * 4, 0, 1)   # G
+        rgba[..., 2] = np.clip(1.5 - np.abs(t - 0.25) * 4, 0, 1)   # B
+        rgba[..., 3] = 1.0
 
-    h, w = gray.shape
-    rgba = np.zeros((h, w, 4), dtype=np.float32)
-
-    # Colour ramp: 0→blue, 0.25→cyan, 0.5→green, 0.75→yellow, 1→red
-    t = gray
-    rgba[..., 0] = np.clip(1.5 - np.abs(t - 1.0) * 4, 0, 1)    # R
-    rgba[..., 1] = np.clip(1.5 - np.abs(t - 0.5) * 4, 0, 1)    # G
-    rgba[..., 2] = np.clip(1.5 - np.abs(t - 0.0) * 4, 0, 1)    # B
-    # Alpha: transparent at 0, fully opaque at 1
-    rgba[..., 3] = np.clip(gray * 1.8, 0, 1)
+    # Alpha: transparent where anomaly is low, opaque where high
+    alpha = np.clip((gray - 0.05) / 0.35, 0, 1)  # ramp from 0.05→0.40
+    alpha = alpha ** 0.5  # open up mid-values more
+    rgba[..., 3] = alpha
 
     return (rgba * 255).astype(np.uint8)
 
