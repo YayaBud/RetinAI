@@ -84,9 +84,10 @@ def _apply_heatmap(gray: np.ndarray) -> np.ndarray:
         rgba[..., 2] = np.clip(1.5 - np.abs(t - 0.25) * 4, 0, 1)   # B
         rgba[..., 3] = 1.0
 
-    # Alpha: transparent where anomaly is low, opaque where high
-    alpha = np.clip((gray - 0.05) / 0.35, 0, 1)  # ramp from 0.05→0.40
-    alpha = alpha ** 0.5  # open up mid-values more
+    # Alpha: transparent where anomaly is low, visible where meaningful
+    # Wider ramp (0.10→0.60) so mid-level lesions are clearly visible
+    alpha = np.clip((gray - 0.10) / 0.50, 0, 1)  # ramp from 0.10→0.60
+    alpha = alpha ** 0.6  # slightly open up mid-values
     rgba[..., 3] = alpha
 
     return (rgba * 255).astype(np.uint8)

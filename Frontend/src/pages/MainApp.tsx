@@ -599,7 +599,7 @@ function HealthPage() {
                     src={`data:image/png;base64,${result.attention_map_b64}`}
                     alt="Attention map"
                     className="absolute inset-0 w-full h-full object-cover"
-                    style={{ opacity: 0.85 }}
+                    style={{ opacity: 0.75 }}
                   />
                   <div className="absolute top-3 right-3 px-3 py-1 bg-black/60 rounded-full text-xs text-white backdrop-blur-sm">
                     Anomaly map
@@ -746,7 +746,7 @@ function ImageLightbox({
                   src={`data:image/png;base64,${result.attention_map_b64}`}
                   alt="Anomaly heatmap"
                   className="absolute inset-0 w-full h-full"
-                  style={{ opacity: 0.35, mixBlendMode: 'screen' }}
+                  style={{ opacity: 0.75 }}
                 />
               </>
             )}
