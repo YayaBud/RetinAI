@@ -260,10 +260,18 @@ export default function LandingPage() {
                 className="bg-[#27D17F] hover:bg-[#22b86e] text-[#0a1e2c] font-bold px-8 rounded-xl group shadow-lg shadow-[#27D17F]/20"
                 onClick={() => navigate('/app')}
               >
-                Start Scanning
+                Launch Observatory
                 <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-1 transition-transform" />
               </Button>
-              <span className="text-sm" style={{ color: C.textMuted }}>No login required</span>
+              <Button
+                size="lg"
+                variant="ghost"
+                className="rounded-xl font-medium border border-white/10 hover:bg-white/5"
+                style={{ color: 'rgba(255,255,255,0.7)' }}
+                onClick={() => navigate('/login')}
+              >
+                Sign In
+              </Button>
             </div>
           </div>
 
