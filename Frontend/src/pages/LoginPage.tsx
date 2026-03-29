@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { signInWithPopup, signInWithEmailAndPassword } from 'firebase/auth';
 import { auth, googleProvider } from '../firebase';
+import { useAuth } from '../context/AuthContext';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -14,11 +15,24 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
+  const { bypassAdmin } = useAuth();
+
+  const handleBypass = () => {
+    bypassAdmin();
+    navigate('/app');
+  };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError('');
+
+    // Admin bypass: if operator username is admin, bypass firebase
+    if (username.toLowerCase() === 'admin' || username.toLowerCase() === 'admin@retinai.local') {
+      bypassAdmin();
+      navigate('/app');
+      return;
+    }
 
     try {
       // For email/password login, we'll assume the username is an email for now
@@ -177,7 +191,11 @@ export default function LoginPage() {
               Authorized Personnel Only
             </p>
             <div className="grid grid-cols-3 gap-2">
-              <div className="px-2 py-1.5 rounded-lg bg-white/5 border border-white/5 flex flex-col items-center">
+              <div 
+                onClick={handleBypass}
+                className="px-2 py-1.5 rounded-lg bg-white/5 border border-white/5 flex flex-col items-center cursor-pointer hover:bg-white/10 transition-colors"
+                title="Bypass Firebase as Admin"
+              >
                 <span className="text-[10px] text-white/40">ADMIN</span>
               </div>
               <div className="px-2 py-1.5 rounded-lg bg-white/5 border border-white/5 flex flex-col items-center">

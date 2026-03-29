@@ -14,6 +14,7 @@ interface AuthContextType {
   user: User | null;
   token: string | null;
   logout: () => void;
+  bypassAdmin: () => void;
   isAuthenticated: boolean;
   loading: boolean;
 }
@@ -24,8 +25,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isBypass, setIsBypass] = useState(() => localStorage.getItem('retinai_admin_bypass') === 'true');
 
   useEffect(() => {
+    if (isBypass) {
+        setUser({
+            username: 'System Admin',
+            email: 'admin@retinai.local',
+            role: 'admin'
+        });
+        setToken('admin_bypass_token');
+        setLoading(false);
+        return;
+    }
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser: FirebaseUser | null) => {
       if (firebaseUser) {
         const idToken = await firebaseUser.getIdToken();
@@ -54,14 +67,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [isBypass]);
 
   const logout = () => {
+    if (isBypass) {
+        setIsBypass(false);
+        localStorage.removeItem('retinai_admin_bypass');
+        setUser(null);
+        setToken(null);
+        return;
+    }
     signOut(auth);
   };
 
+  const bypassAdmin = () => {
+    localStorage.setItem('retinai_admin_bypass', 'true');
+    setIsBypass(true);
+  };
+
   return (
-    <AuthContext.Provider value={{ user, token, logout, isAuthenticated: !!token, loading }}>
+    <AuthContext.Provider value={{ user, token, logout, bypassAdmin, isAuthenticated: !!token, loading }}>
       {children}
     </AuthContext.Provider>
   );
