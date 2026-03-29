@@ -733,7 +733,7 @@ function ImageLightbox({
           ×
         </button>
 
-        {/* Left: Full image — fills entire panel */}
+        {/* Left: Full image */}
         <div className="lg:w-3/5 w-full bg-black flex items-center justify-center relative min-h-[50vh] lg:min-h-0">
           {type === 'fundus' && previewUrl && (
             <img src={previewUrl} alt="Fundus full" className="w-full h-full object-contain" />
@@ -749,24 +749,6 @@ function ImageLightbox({
               />
             </>
           )}
-        {/* Left: Full image */}
-        <div className="lg:w-3/5 w-full bg-black flex items-center justify-center relative">
-          <div className="relative inline-block">
-            {type === 'fundus' && previewUrl && (
-              <img src={previewUrl} alt="Fundus full" className="block max-w-full max-h-[85vh]" />
-            )}
-            {type === 'anomaly' && previewUrl && result && (
-              <>
-                <img src={previewUrl} alt="Fundus" className="block max-w-full max-h-[85vh]" />
-                <img
-                  src={`data:image/png;base64,${result.attention_map_b64}`}
-                  alt="Anomaly heatmap"
-                  className="absolute inset-0 w-full h-full"
-                  style={{ opacity: 0.75 }}
-                />
-              </>
-            )}
-          </div>
           <div className="absolute top-4 left-4 px-3 py-1.5 bg-black/60 rounded-full text-xs text-white backdrop-blur-sm font-medium">
             {type === 'fundus' ? 'Original Fundus Image' : 'Anomaly Heatmap Overlay'}
           </div>

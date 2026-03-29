@@ -322,15 +322,6 @@ class RetinaInference:
         dr_final = float(np.nan_to_num(np.clip(final_probs[0], 0, 1), nan=0.0))
         glaucoma_final = float(np.nan_to_num(np.clip(final_probs[1], 0, 1), nan=0.0))
         myopia_final = float(np.nan_to_num(np.clip(final_probs[2], 0, 1), nan=0.0))
-        # The meta-classifier outputs a softmax over the 3 diseases, meaning they will sum to 1.0.
-        # Taking max() causes extreme false positives on completely healthy images where meta_probs
-        # might assign 0.9 entirely arbitrarily. 
-        # Instead, scale the meta_classifier influence by the base maximum predicted probability.
-        base_max = max(dr_positive_prob, glaucoma_positive_prob, myopia_positive_prob)
-        
-        dr_final = float(np.clip((dr_positive_prob * 0.75) + (meta_probs[0] * base_max * 0.25), 0, 1))
-        glaucoma_final = float(np.clip((glaucoma_positive_prob * 0.75) + (meta_probs[1] * base_max * 0.25), 0, 1))
-        myopia_final = float(np.clip((myopia_positive_prob * 0.75) + (meta_probs[2] * base_max * 0.25), 0, 1))
 
         # DR severity from the 5-class output
         dr_class = int(np.argmax(dr_probs))
@@ -348,159 +339,76 @@ class RetinaInference:
     # ─── Stage implementations ───────────────────────────────────────────
 
     @staticmethod
-    def _make_retinal_mask(image_01: np.ndarray) -> np.ndarray:
-        """Build a retinal foreground mask purely from pixel brightness.
-        image_01: (H,W,3) in [0,1].  Returns (H,W) float32 {0,1}.
-
-        At 256×256, geometric circles don't align well with non-square
-        fundus crops.  Instead we threshold on brightness and erode slightly
-        to cut the bright border fringe.
-        """
+    def _make_retinal_mask(image_01: np.ndarray, margin: float = 0.02) -> np.ndarray:
+        """Build circular retinal mask. image_01: (H,W,3) in [0,1]. Returns (H,W) float32."""
         H, W = image_01.shape[:2]
-        # Mean brightness per pixel — fundus interior is > ~0.08
-        brightness = image_01.mean(axis=2)  # (H, W)
-        mask = (brightness > 0.08).astype(np.float32)
-
-        # Erode by 4 pixels to kill border fringe (box erosion via min-pool)
-        # numpy-only: slide a small kernel
-        k = 4
-        eroded = mask.copy()
-        for _ in range(k):
-            padded = np.pad(eroded, 1, mode='constant', constant_values=0)
-            eroded = np.minimum(
-                np.minimum(padded[:-2, 1:-1], padded[2:, 1:-1]),
-                np.minimum(padded[1:-1, :-2], padded[1:-1, 2:])
-            )
-        return eroded
-
-    @staticmethod
-    def _numpy_blur(arr: np.ndarray, radius: int = 3) -> np.ndarray:
-        """Pure-numpy box blur (no scipy). Applies `radius` passes of a
-        3×3 uniform filter.  Good enough for smoothing heatmaps."""
-        out = arr.astype(np.float64)
-        for _ in range(radius):
-            padded = np.pad(out, 1, mode='reflect')
-            out = (
-                padded[:-2, :-2] + padded[:-2, 1:-1] + padded[:-2, 2:] +
-                padded[1:-1, :-2] + padded[1:-1, 1:-1] + padded[1:-1, 2:] +
-                padded[2:, :-2]  + padded[2:, 1:-1]  + padded[2:, 2:]
-            ) / 9.0
-        return out.astype(np.float32)
+        fg = (image_01.mean(axis=2) > 0.05).astype(np.float32)
+        cy, cx = H / 2, W / 2
+        r = min(H, W) / 2 * (1.0 - margin)
+        ys = np.arange(H, dtype=np.float32) - cy
+        xs = np.arange(W, dtype=np.float32) - cx
+        yy, xx = np.meshgrid(ys, xs, indexing='ij')
+        circle = ((yy**2 + xx**2) <= r**2).astype(np.float32)
+        return circle * fg
 
     def _run_diffusion(self, image: np.ndarray) -> tuple[np.ndarray, float]:
         """
         Generate anomaly map via diffusion reconstruction + trained seg head.
-
-        Pipeline:
-          1. Run diffusion denoising N times with different simplex noise
-          2. Average the seg head predictions for stability
-          3. Also compute raw residual |orig - recon| as complementary signal
-          4. Blend: 0.7×seg_head + 0.3×raw_residual (they catch different things)
-          5. Mask strictly to retinal foreground, normalize within mask only
-
+        The seg head was trained to identify real lesions vs reconstruction noise.
         image: (H, W, 3) float32 [0, 1]
         Returns (attention_map (H, W) [0,1], anomaly_score float [0,1])
         """
         device = self.device
         TIMESTEP = 500
-        N_SAMPLES = 3
-
-        # ── Retinal mask first — used throughout ──────────────────────────
-        retinal_mask = self._make_retinal_mask(image)
 
         # Normalize to [-1, 1] for diffusion model
         img_tensor = (
             torch.from_numpy(image)
-            .permute(2, 0, 1)
-            .unsqueeze(0)
+            .permute(2, 0, 1)        # (3, H, W)
+            .unsqueeze(0)             # (1, 3, H, W)
             .float()
             .to(device)
         )
-        img_tensor = img_tensor * 2.0 - 1.0
+        img_tensor = img_tensor * 2.0 - 1.0  # [0,1] → [-1,1]
 
         t = torch.tensor([TIMESTEP], device=device).long()
         ac = self._noise_scheduler.alphas_cumprod[TIMESTEP].to(device)
-        cond = self._conditioner(device)
 
-        # ── Multi-sample reconstruction ───────────────────────────────────
-        seg_accum = torch.zeros(1, 1, image.shape[0], image.shape[1], device=device)
-        resid_accum = np.zeros((image.shape[0], image.shape[1]), dtype=np.float64)
+        # Generate conditioning from projection MLP
+        cond = self._conditioner(device)  # (1, 1, 768)
 
-        for _ in range(N_SAMPLES):
-            noise = generate_simplex_noise(img_tensor.shape, device)
-            noisy = ac.sqrt() * img_tensor + (1 - ac).sqrt() * noise
+        # Single-sample reconstruction
+        noise = generate_simplex_noise(img_tensor.shape, device)
+        noisy = ac.sqrt() * img_tensor + (1 - ac).sqrt() * noise
 
-            pred_noise = self._diffusion_model(
-                noisy, t, encoder_hidden_states=cond
-            ).sample.float()
-            recon = (noisy - (1 - ac).sqrt() * pred_noise) / (ac.sqrt() + 1e-8)
-            recon = recon.clamp(-1, 1)
+        pred_noise = self._diffusion_model(noisy, t,
+                                            encoder_hidden_states=cond).sample.float()
+        recon = (noisy - (1 - ac).sqrt() * pred_noise) / (ac.sqrt() + 1e-8)
+        recon = recon.clamp(-1, 1)
 
-            # Seg head: learned anomaly detector
-            with torch.no_grad():
-                seg_map = self._seg_head(img_tensor.float(), recon.float())
-            seg_accum += seg_map
+        # Use trained seg head: (orig, recon) → learned anomaly map
+        with torch.no_grad():
+            seg_map = self._seg_head(img_tensor.float(), recon.float())  # (1,1,H,W)
 
-            # Raw residual: |original - reconstruction| per channel, mean
-            orig_01 = ((img_tensor.squeeze().permute(1, 2, 0).cpu().float().numpy() + 1) / 2).clip(0, 1)
-            reco_01 = ((recon.squeeze().permute(1, 2, 0).cpu().float().numpy() + 1) / 2).clip(0, 1)
-            resid_accum += np.abs(orig_01 - reco_01).mean(axis=2)
+        anomaly_map = seg_map.squeeze().cpu().numpy().astype(np.float32)  # (H,W) in [0,1]
 
-        seg_avg = (seg_accum / N_SAMPLES).squeeze().cpu().numpy().astype(np.float32)
-        resid_avg = (resid_accum / N_SAMPLES).astype(np.float32)
+        # Apply retinal mask to exclude borders
+        retinal_mask = self._make_retinal_mask(image)
+        anomaly_map = anomaly_map * retinal_mask
 
-        # ── Mask both signals strictly ────────────────────────────────────
-        seg_avg   = seg_avg * retinal_mask
-        resid_avg = resid_avg * retinal_mask
-
-        # ── Normalize each within-mask to [0,1] ──────────────────────────
-        fg = retinal_mask > 0.5
-
-        # Seg head normalization
-        seg_fg = seg_avg[fg]
-        if len(seg_fg) > 0 and seg_fg.max() - seg_fg.min() > 1e-7:
-            p_lo = np.percentile(seg_fg, 40)
-            p_hi = np.percentile(seg_fg, 99)
-            if p_hi - p_lo > 1e-7:
-                seg_norm = ((seg_avg - p_lo) / (p_hi - p_lo)).clip(0, 1) * retinal_mask
+        # Percentile-based normalization: stretch relative differences
+        # so the visualization shows where the seg head sees MORE anomaly
+        fg_vals = anomaly_map[retinal_mask > 0.5]
+        if len(fg_vals) > 0:
+            p_low = np.percentile(fg_vals, 70)   # bottom 70% → near zero
+            p_high = np.percentile(fg_vals, 99)  # top 1% → fully bright
+            if p_high - p_low > 1e-6:
+                anomaly_map = ((anomaly_map - p_low) / (p_high - p_low)).clip(0, 1)
             else:
-                seg_norm = np.zeros_like(seg_avg)
-        else:
-            seg_norm = np.zeros_like(seg_avg)
+                anomaly_map = np.zeros_like(anomaly_map)
+        anomaly_map = anomaly_map * retinal_mask  # re-mask after stretch
 
-        # Raw residual normalization — median-subtract to remove baseline
-        resid_fg = resid_avg[fg]
-        if len(resid_fg) > 0:
-            median = np.median(resid_fg)
-            resid_clean = (resid_avg - median).clip(0) * retinal_mask
-            r_max = resid_clean.max()
-            if r_max > 1e-7:
-                resid_norm = (resid_clean / r_max) * retinal_mask
-            else:
-                resid_norm = np.zeros_like(resid_avg)
-        else:
-            resid_norm = np.zeros_like(resid_avg)
-
-        # ── Blend: seg head + raw residual ────────────────────────────────
-        # Seg head catches learned patterns, residual catches anything
-        # the seg head might miss (bright exudates, large hemorrhages)
-        anomaly_map = (0.6 * seg_norm + 0.4 * resid_norm) * retinal_mask
-
-        # ── Smooth for visual coherence (numpy box blur, no scipy) ────────
-        anomaly_map = self._numpy_blur(anomaly_map, radius=4)
-        anomaly_map = anomaly_map * retinal_mask  # strict re-mask after blur
-
-        # ── Final contrast stretch within mask ────────────────────────────
-        final_fg = anomaly_map[fg]
-        if len(final_fg) > 0:
-            p_lo = np.percentile(final_fg, 30)
-            p_hi = np.percentile(final_fg, 98)
-            if p_hi - p_lo > 1e-7:
-                anomaly_map = ((anomaly_map - p_lo) / (p_hi - p_lo)).clip(0, 1)
-            # else leave as-is
-        anomaly_map = anomaly_map * retinal_mask  # final mask
-
-        anomaly_score = float(np.nan_to_num(anomaly_map[fg].mean(), nan=0.0)) if fg.any() else 0.0
+        anomaly_score = float(np.nan_to_num(anomaly_map.mean(), nan=0.0))
         return anomaly_map, anomaly_score
 
     @staticmethod
