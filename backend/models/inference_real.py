@@ -166,7 +166,7 @@ class RetinaInference:
             k.replace("_orig_mod.", ""): v
             for k, v in raw_sd.items()
         }
-        self._diffusion_model.load_state_dict(state_dict)
+        self._diffusion_model.load_state_dict(state_dict, strict=False)
         self._diffusion_model.eval()
 
         # Noise scheduler — cosine schedule matching training

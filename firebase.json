@@ -1,0 +1,10 @@
+{
+  "auth": {
+    "providers": {
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "RetinAI Dashboard",
+        "supportEmail": "adityasa2838@gmail.com"
+      }
+    }
+  }
+}
