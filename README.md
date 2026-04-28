@@ -21,6 +21,7 @@ A complete end-to-end system for **simultaneous detection of three retinal disea
   - [Stage 2 — Disease-Specific CNNs (4-Channel)](#stage-2--disease-specific-cnns-4-channel)
   - [Stage 3 — Meta-Classifier Fusion](#stage-3--meta-classifier-fusion)
 - [Key Results](#key-results)
+- [Current State & Limitations](#current-state--limitations)
 - [Project Structure](#project-structure)
 - [Datasets](#datasets)
 - [Training Pipeline](#training-pipeline)
@@ -182,6 +183,63 @@ The meta-classifier learns **cross-disease correlations** and produces a unified
 - **99.8% AUC-ROC** for the meta-classifier ensemble
 - DR grading (5-class) remains the most challenging task due to subtle inter-grade differences (62.2% accuracy, 80.9% AUC)
 - Strong performance for Glaucoma (~95% F1) and PM (~95-96% F1)
+
+---
+
+## Current State & Limitations
+
+### Current State
+
+RetinAI is a **research prototype** implementing a complete end-to-end multi-disease retinal screening pipeline. The following components are fully functional:
+
+| Component | Status |
+|-----------|--------|
+| Diffusion anomaly detector (DDPM) | ✅ Trained & evaluated |
+| CNN-1 — Diabetic Retinopathy (5-class) | ✅ Trained & evaluated |
+| CNN-2 — Glaucoma detection | ✅ Trained & evaluated |
+| CNN-3 — Pathologic Myopia detection | ✅ Trained & evaluated |
+| Meta-classifier MLP | ✅ Trained & evaluated |
+| FastAPI inference backend | ✅ Functional |
+| React frontend — Upload & Analysis | ✅ Functional |
+| React frontend — Dashboard | ✅ Functional |
+| React frontend — Schedule (calendar) | ✅ Functional |
+| React frontend — AI Chat (Ollama) | ✅ Functional |
+| React frontend — Patients registry | 🚧 Coming soon |
+| React frontend — PDF report export | 🚧 Coming soon |
+| React frontend — Prescription management | 🚧 Coming soon |
+| Clinical validation | ❌ Not performed |
+
+### Known Limitations
+
+#### Model & Accuracy
+
+1. **DR grading accuracy is limited (62.2%, 5-class)** — Subtle differences between adjacent severity grades (e.g. Mild vs. Moderate) remain difficult to distinguish even for deep learning models. This is a known hard problem in the field; the system's AUC-ROC of 80.9% is more reliable than raw accuracy for clinical interpretation.
+
+2. **Small datasets for Glaucoma and Pathologic Myopia** — Both binary classifiers were trained on approximately 400–1,200 images. While accuracy is high (95–97%), performance on out-of-distribution images or less common presentation styles is not guaranteed.
+
+3. **Single primary diagnosis output** — The meta-classifier routes each image to **one** primary disease. Co-occurring conditions (e.g. a patient with both DR and Glaucoma) are not explicitly modeled; the system will surface the dominant disease only.
+
+4. **No other retinal pathologies** — The system is scoped to three diseases (DR, Glaucoma, PM). It cannot detect age-related macular degeneration (AMD), retinal detachment, epiretinal membranes, or any other condition not represented in the training data.
+
+5. **Image quality sensitivity** — Low-quality fundus photographs (poor focus, heavy lens artifacts, extreme under/over-exposure) can degrade the diffusion anomaly map and propagate errors through the pipeline. No automated image quality gating is implemented.
+
+#### Infrastructure & Deployment
+
+6. **Large model weights (~1.6 GB)** — The five checkpoint files (diffusion UNet, three disease-specific CNNs, and the meta-classifier MLP) must be downloaded separately from Google Drive. They are not bundled with the repository.
+
+7. **GPU recommended for practical use** — The diffusion reconstruction step (500 DDPM inference steps) is computationally expensive. On CPU, a single inference can take several minutes. A CUDA-capable GPU is strongly recommended for any latency-sensitive deployment.
+
+8. **No authentication or access control** — The FastAPI backend has no built-in authentication. It must not be exposed directly to the internet without adding an auth layer (API keys, OAuth, etc.) in front.
+
+9. **HIPAA / clinical compliance** — This is a research prototype and has **not** been evaluated for regulatory compliance (FDA clearance, CE marking, HIPAA). It should **not** be used for actual patient diagnosis without proper clinical validation and regulatory approval.
+
+#### Research Scope
+
+10. **Single fundus image per inference** — The pipeline processes one image at a time. Longitudinal comparison of sequential scans, stereoscopic disc photographs, or other multi-frame inputs are not supported.
+
+11. **Fixed input modality** — Only standard color fundus photographs are supported. OCT scans, fluorescein angiography, or ultra-wide-field images are outside the current scope.
+
+12. **No uncertainty quantification** — The confidence scores are softmax probabilities from a deterministic forward pass. Bayesian uncertainty estimation (e.g. MC-Dropout, deep ensembles) is not implemented, meaning the model does not explicitly flag when it is uncertain about a prediction.
 
 ---
 
